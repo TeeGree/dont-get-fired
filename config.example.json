@@ -1,0 +1,30 @@
+{
+  "port": 4444,
+  "jira": {
+    "enabled": false,
+    "flavor": "cloud",
+    "baseUrl": "",
+    "email": "",
+    "apiToken": "",
+    "personalAccessToken": "",
+    "jql": "assignee = currentUser() AND statusCategory != Done ORDER BY duedate ASC",
+    "maxResults": 50,
+    "mirrorClosed": true
+  },
+  "outlook": {
+    "enabled": false,
+    "clientId": "",
+    "tenantId": "common",
+    "redirectUri": "http://localhost:4444/api/integrations/outlook/callback",
+    "scopes": [
+      "offline_access",
+      "Mail.Read",
+      "Tasks.Read",
+      "User.Read"
+    ],
+    "flaggedMail": true,
+    "todo": false,
+    "maxResults": 50,
+    "mirrorClosed": true
+  }
+}

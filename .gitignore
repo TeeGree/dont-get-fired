@@ -1,1 +1,11 @@
+node_modules/
 
+config.json
+
+data/
+*.db
+*.db-shm
+*.db-wal
+*-token.json
+.env
+.env.*

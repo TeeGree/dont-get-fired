@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>rodeo</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐂</text></svg>">
+</head>
+<body>
+  <div class="app">
+    <header class="top">
+      <div class="brand">🐂 rodeo <small>task wrangler</small></div>
+
+      <div class="views" id="views" role="group" aria-label="View">
+        <button data-view="all" aria-pressed="true">All open</button>
+        <button data-view="closed" aria-pressed="false">Closed</button>
+      </div>
+
+      <input class="search" id="search" type="search" placeholder="Search…  ( / )" autocomplete="off">
+      <div class="spacer"></div>
+      <button class="btn" id="btn-recap-today" title="What did I do today?">What did I do today?</button>
+      <button class="btn" id="btn-recap-day" title="What did I do on a specific day?">What did I do on...</button>
+      <button class="btn" id="btn-tags" title="Pick a colour for each tag">Tags</button>
+      <button class="btn" id="btn-sync" title="Pull from Jira and Outlook">⟳ Sync</button>
+      <button class="btn" id="btn-settings" title="Integrations">⚙</button>
+      <button class="btn primary" id="btn-new" title="New task (n)">+ Task</button>
+    </header>
+
+    <div class="stats" id="stats"></div>
+
+    <main class="list-pane">
+      <form class="quickadd" id="quickadd">
+        <input id="quickadd-input" placeholder="Add a task…  try:  Fix quote totals !high @2026-09-01 ~3h #QAD-1017" autocomplete="off">
+        <button class="btn primary" type="submit" id="quickadd-btn"
+                title="Add to the top — hold shift for the bottom">Add</button>
+      </form>
+      <div id="tree"></div>
+    </main>
+  </div>
+
+  <div id="modal-root"></div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
