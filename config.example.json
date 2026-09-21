@@ -20,7 +20,8 @@
       "offline_access",
       "Mail.Read",
       "Tasks.Read",
-      "User.Read"
+      "User.Read",
+      "Calendars.Read"
     ],
     "flaggedMail": true,
     "todo": false,

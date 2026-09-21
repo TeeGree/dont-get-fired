@@ -53,6 +53,7 @@ function store(cfg, payload) {
     access_token: payload.access_token,
     refresh_token: payload.refresh_token || readToken()?.refresh_token,
     expires_at: Date.now() + (payload.expires_in ?? 3600) * 1000 - 60_000,
+    scope: payload.scope || null,
     account,
   });
   return payload;
@@ -74,6 +75,29 @@ const redirectUri = (cfg) => cfg.redirectUri || `http://localhost:4444${CALLBACK
 
 const b64url = (buf) => buf.toString('base64url');
 
+/**
+ * A config written before the recap read calendars can pin a scopes list that
+ * leaves Calendars.Read out, and a token missing it fails only later, as a 403
+ * from Graph. Ask for what rodeo actually needs regardless of what it says.
+ */
+const REQUIRED_SCOPES = ['offline_access', 'Calendars.Read'];
+const scopeList = (cfg) => [...new Set([...(cfg.scopes || []), ...REQUIRED_SCOPES])];
+const scopeString = (cfg) => scopeList(cfg).join(' ');
+
+/**
+ * Entra hands back the scopes it actually granted, which is not always the set
+ * that was asked for. A cached token minted before a scope was added stays valid
+ * for an hour, so without this check adding one looks like a 403 from Graph.
+ * Tokens cached by older versions have no record of their scopes: refresh those.
+ */
+function coversScopes(tok, cfg) {
+  if (!tok.scope) return false;
+  const granted = tok.scope.toLowerCase();
+  return scopeList(cfg)
+    .filter((s) => s !== 'offline_access') // consent-only; never appears in the grant
+    .every((s) => granted.includes(s.toLowerCase()));
+}
+
 /** One sign-in at a time; the verifier never leaves this process. */
 let pending = null;
 
@@ -88,7 +112,7 @@ export function startLogin(cfg) {
     response_type: 'code',
     redirect_uri: redirectUri(cfg),
     response_mode: 'query',
-    scope: (cfg.scopes || []).join(' '),
+    scope: scopeString(cfg),
     state,
     code_challenge: b64url(createHash('sha256').update(verifier).digest()),
     code_challenge_method: 'S256',
@@ -124,7 +148,7 @@ export async function handleCallback(cfg, params) {
       code,
       redirect_uri: redirectUri(cfg),
       code_verifier: pending.verifier,
-      scope: (cfg.scopes || []).join(' '),
+      scope: scopeString(cfg),
     }),
   });
   const data = await res.json();
@@ -150,7 +174,8 @@ export function pollLogin() {
 async function accessToken(cfg) {
   const tok = readToken();
   if (!tok?.refresh_token) throw new Error('Outlook is not connected — click Connect to sign in');
-  if (tok.access_token && tok.expires_at > Date.now()) return tok.access_token;
+  const cached = tok.access_token && tok.expires_at > Date.now() ? tok.access_token : null;
+  if (cached && coversScopes(tok, cfg)) return cached;
 
   const res = await fetch(`${authority(cfg)}/token`, {
     method: 'POST',
@@ -159,19 +184,29 @@ async function accessToken(cfg) {
       grant_type: 'refresh_token',
       client_id: cfg.clientId,
       refresh_token: tok.refresh_token,
-      scope: (cfg.scopes || []).join(' '),
+      scope: scopeString(cfg),
     }),
   });
   const data = await res.json();
-  if (!res.ok) throw new Error(`Outlook token refresh failed: ${data.error_description || data.error}`);
+  if (!res.ok) {
+    // A refresh asking for a newly added scope fails until you consent to it
+    // interactively. The cached token still covers what it was granted, so mail
+    // and tasks carry on; only the calendar call ends up failing, and it says why.
+    if (cached) return cached;
+    const detail = data.error_description || data.error;
+    const hint = /AADSTS65001|consent|invalid_grant|interaction_required/i.test(detail || '')
+      ? ' — click Connect to sign in again'
+      : '';
+    throw new Error(`Outlook token refresh failed: ${detail}${hint}`);
+  }
   store(cfg, data);
   return data.access_token;
 }
 
-async function graph(cfg, path) {
+async function graph(cfg, path, headers = {}) {
   const token = await accessToken(cfg);
   const res = await fetch(GRAPH + path, {
-    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', ...headers },
   });
   if (!res.ok) {
     const body = await res.text().catch(() => '');
@@ -245,6 +280,65 @@ export async function fetchItems(cfg) {
   }
 
   return items;
+}
+
+/* ---------- calendar ---------- */
+
+const EVENT_SELECT = 'id,subject,start,end,isAllDay,isCancelled,responseStatus,organizer,webLink';
+
+/** Graph calls the organizer's own events 'organizer'; an unanswered invite is 'none'. */
+function rsvp(event) {
+  const response = event.responseStatus?.response || 'none';
+  return response === 'notResponded' ? 'none' : response;
+}
+
+/**
+ * Meetings on one local day, for the recap.
+ *
+ * calendarView (not /events) is the one that expands recurring series into the
+ * occurrences that actually sat on your calendar. Declined and cancelled events
+ * are dropped: the recap answers where the day went, and those are the two cases
+ * where the answer is "not here". Unanswered invites stay — plenty of meetings
+ * get attended without anyone ever clicking Accept.
+ */
+export async function fetchMeetings(cfg, day) {
+  // Graph reads naive boundaries as UTC, so send real instants and let the Prefer
+  // header decide the zone the times come back in.
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  const start = new Date(`${day}T00:00:00`);
+  const end = new Date(`${day}T23:59:59.999`);
+  if (Number.isNaN(start.getTime())) throw new Error(`not a date: ${day}`);
+
+  const params = new URLSearchParams({
+    startDateTime: start.toISOString(),
+    endDateTime: end.toISOString(),
+    $select: EVENT_SELECT,
+    $orderby: 'start/dateTime',
+    $top: String(cfg.maxResults ?? 50),
+  });
+  const data = await graph(cfg, `/me/calendarView?${params}`, {
+    Prefer: `outlook.timezone="${zone}"`,
+  }).catch((err) => {
+    // Everything else works with a mail-only grant, so a 403 here means one thing.
+    if (/403|Forbidden|AccessDenied/i.test(err.message)) {
+      throw new Error('no calendar permission on this sign-in — ⚙ → Connect to sign in again');
+    }
+    throw err;
+  });
+
+  return (data.value ?? [])
+    .filter((e) => !e.isCancelled && rsvp(e) !== 'declined')
+    .map((e) => ({
+      id: e.id,
+      subject: e.subject?.trim() || '(no subject)',
+      // Graph returns seven fractional digits, which not every Date parser accepts.
+      start: e.start?.dateTime?.slice(0, 19) ?? null,
+      end: e.end?.dateTime?.slice(0, 19) ?? null,
+      all_day: Boolean(e.isAllDay),
+      response: rsvp(e),
+      organizer: e.organizer?.emailAddress?.name || e.organizer?.emailAddress?.address || null,
+      url: e.webLink || null,
+    }));
 }
 
 function dateOnly(iso) {

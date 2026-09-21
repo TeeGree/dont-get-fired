@@ -415,6 +415,12 @@ a.chip:hover { text-decoration: underline; }
   padding: 5px 8px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--panel-2);
 }
 .recap-empty { color: var(--ink-3); padding: 20px 0 4px; }
+.recap-empty.fired { color: var(--ink-2); font-size: 15px; }
+.recap-meetings:empty { display: none; }
+.chip.rsvp-accepted { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+.chip.rsvp-tentative { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+.chip.rsvp-organizer { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+.chip.rsvp-none { background: var(--panel-2); color: var(--ink-2); }
 .recap-list { display: flex; flex-direction: column; gap: 9px; }
 .recap-item { display: flex; align-items: flex-start; gap: 10px; font-size: 13px; }
 .recap-item > time { font: 600 11px var(--mono); color: var(--ink-3); white-space: nowrap; padding-top: 3px; }

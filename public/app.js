@@ -1102,6 +1102,40 @@ function recapHeading(day) {
   return `What I did on ${when}`;
 }
 
+const RSVP = {
+  accepted: { label: 'accepted', class: 'accepted' },
+  tentativelyAccepted: { label: 'tentative', class: 'tentative' },
+  organizer: { label: 'you organized', class: 'organizer' },
+  none: { label: 'no reply', class: 'none' },
+};
+
+function meetingRow(m) {
+  const rsvp = RSVP[m.response] ?? RSVP.none;
+  return h('div', { class: 'recap-item' },
+    h('time', { text: m.all_day ? 'all day' : timeOfDay(m.start) }),
+    h('div', { class: 'grow' },
+      h('div', {}, m.url
+        ? h('a', { href: m.url, target: '_blank', rel: 'noopener noreferrer', text: m.subject })
+        : m.subject),
+      h('div', { class: 'chips' },
+        h('span', { class: `chip rsvp-${rsvp.class}`, text: rsvp.label }),
+        m.organizer && m.response !== 'organizer'
+          ? h('span', { class: 'chip', text: m.organizer })
+          : null)));
+}
+
+function recapSummary({ completed, meetings, hours, notes }) {
+  return [
+    `${completed} task${completed === 1 ? '' : 's'} closed`,
+    meetings ? `${meetings} meeting${meetings === 1 ? '' : 's'}` : null,
+    hours ? `${Math.round(hours * 10) / 10}h estimated` : null,
+    notes ? `${notes} note${notes === 1 ? '' : 's'} logged` : null,
+  ].filter(Boolean).join(' · ');
+}
+
+/** Only the newest recap paints — picking a new date mid-fetch shouldn't race. */
+let recapRequest = 0;
+
 function openRecap(day, { pickDate = false } = {}) {
   const { completed, logged, hours, notes } = recapFor(day);
 
@@ -1110,20 +1144,21 @@ function openRecap(day, { pickDate = false } = {}) {
     onchange: (e) => { if (e.target.value) openRecap(e.target.value); },
   });
 
-  const summary = [
-    `${completed.length} task${completed.length === 1 ? '' : 's'} closed`,
-    hours ? `${Math.round(hours * 10) / 10}h estimated` : null,
-    notes ? `${notes} note${notes === 1 ? '' : 's'} logged` : null,
-  ].filter(Boolean).join(' · ');
+  const summaryEl = h('div', {
+    class: 'hint',
+    text: recapSummary({ completed: completed.length, meetings: 0, hours, notes }),
+  });
+  // Both of these fill in once Outlook answers: until then rodeo doesn't know
+  // whether the day was empty, so it says nothing rather than something wrong.
+  const meetingsBox = h('div', { class: 'recap-meetings' },
+    h('div', { class: 'hint', text: 'Checking Outlook…' }));
+  const emptyBox = h('div', {});
 
   const parts = [
     h('div', { class: 'recap-head' }, h('h3', { text: recapHeading(day) }), dateInput),
-    h('div', { class: 'hint', text: summary }),
+    summaryEl,
+    emptyBox,
   ];
-
-  if (!completed.length && !logged.length) {
-    parts.push(h('div', { class: 'recap-empty', text: 'Nothing closed and nothing logged on this day.' }));
-  }
 
   if (completed.length) {
     parts.push(h('div', { class: 'section-title', text: 'Completed' }));
@@ -1133,6 +1168,8 @@ function openRecap(day, { pickDate = false } = {}) {
         h('div', {}, h('span', { class: 'rid', text: `R-${t.id}` }), ' ', t.title),
         recapChips(t))))));
   }
+
+  parts.push(meetingsBox);
 
   if (logged.length) {
     parts.push(h('div', { class: 'section-title', text: 'Logged' }));
@@ -1155,6 +1192,37 @@ function openRecap(day, { pickDate = false } = {}) {
     dateInput.focus();
     try { dateInput.showPicker?.(); } catch { /* picker needs user activation; focus is enough */ }
   }
+
+  const paint = ({ available, meetings = [], detail }) => {
+    meetingsBox.replaceChildren(...(available
+      ? meetings.length
+        ? [h('div', { class: 'section-title', text: 'Meetings' }),
+           h('div', { class: 'recap-list' }, ...meetings.map(meetingRow))]
+        : []
+      : [h('div', { class: 'hint', text: `Meetings unavailable — ${detail}` })]));
+
+    summaryEl.textContent = recapSummary({
+      completed: completed.length, meetings: meetings.length, hours, notes,
+    });
+
+    if (completed.length || logged.length || meetings.length) {
+      emptyBox.replaceChildren();
+      return;
+    }
+    // Rodeo can only call a day empty if it could see the calendar. Without that
+    // the old wording stands, since "no meetings" would be a guess.
+    emptyBox.replaceChildren(h('div', {
+      class: available ? 'recap-empty fired' : 'recap-empty',
+      text: available
+        ? 'Nothing as far as I know... Maybe you got fired 🔥'
+        : 'Nothing closed and nothing logged on this day.',
+    }));
+  };
+
+  const request = ++recapRequest;
+  api('GET', `/api/recap/meetings?day=${day}`)
+    .catch((err) => ({ available: false, detail: err.message }))
+    .then((data) => { if (request === recapRequest) paint(data); });
 }
 
 /* ---------- wiring ---------- */

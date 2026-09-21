@@ -28,7 +28,7 @@ const DEFAULTS = {
     tenantId: 'common',
     // register this exact string in Entra under "Mobile and desktop applications"
     redirectUri: 'http://localhost:4444/api/integrations/outlook/callback',
-    scopes: ['offline_access', 'Mail.Read', 'Tasks.Read', 'User.Read'],
+    scopes: ['offline_access', 'Mail.Read', 'Tasks.Read', 'User.Read', 'Calendars.Read'],
     // pull flagged email into rodeo
     flaggedMail: true,
     // pull Microsoft To Do tasks into rodeo

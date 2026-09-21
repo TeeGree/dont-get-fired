@@ -89,10 +89,31 @@ const routes = [
   ['POST', /^\/api\/integrations\/outlook\/poll$/, () => providers.outlook.pollLogin()],
   ['POST', /^\/api\/integrations\/outlook\/signout$/, () => providers.outlook.signOut()],
 
+  ['GET', /^\/api\/recap\/meetings$/, (m, body, query) => meetingsForDay(query.get('day'))],
+
   ['GET', /^\/api\/export$/, () => ({ exported_at: new Date().toISOString(), tasks: T.snapshot() })],
 ];
 
-async function handleApi(req, res, pathname) {
+/**
+ * The recap reads the calendar live rather than through sync: meetings are
+ * reference material, not work rodeo tracks, and a stale answer about today is
+ * worse than a slow one. `available: false` means rodeo cannot say — the recap
+ * keeps that apart from a day that genuinely had no meetings.
+ */
+async function meetingsForDay(day) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day || '')) throw new T.HttpError(400, 'day must be YYYY-MM-DD');
+  const { outlook } = providers;
+  const cfg = loadConfig().outlook;
+  if (!outlook.configured(cfg)) return { available: false, detail: outlook.describe(cfg) };
+  if (!outlook.hasToken()) return { available: false, detail: 'not signed in — ⚙ → Connect' };
+  try {
+    return { available: true, meetings: await outlook.fetchMeetings(cfg, day) };
+  } catch (err) {
+    return { available: false, detail: err.message };
+  }
+}
+
+async function handleApi(req, res, pathname, query) {
   // Several routes share a path shape, so keep looking after a method mismatch —
   // giving up on the first one would hide DELETE behind PATCH.
   const allowed = [];
@@ -101,7 +122,7 @@ async function handleApi(req, res, pathname) {
     if (!m) continue;
     if (req.method !== method) { allowed.push(method); continue; }
     const body = ['POST', 'PATCH', 'PUT'].includes(req.method) ? await readBody(req) : {};
-    return send(res, 200, await handler(m, body));
+    return send(res, 200, await handler(m, body, query));
   }
   if (allowed.length) return send(res, 405, { error: `use ${allowed.join(' or ')} for this endpoint` });
   return send(res, 404, { error: `no route for ${req.method} ${pathname}` });
@@ -128,7 +149,7 @@ const server = createServer(async (req, res) => {
       const html = await providers.outlook.handleCallback(loadConfig().outlook, searchParams);
       return send(res, 200, html, { 'Content-Type': 'text/html; charset=utf-8' });
     }
-    if (pathname.startsWith('/api/')) return await handleApi(req, res, pathname);
+    if (pathname.startsWith('/api/')) return await handleApi(req, res, pathname, searchParams);
     return await serveStatic(res, pathname);
   } catch (err) {
     const code = err.status ?? 500;

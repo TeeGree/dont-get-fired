@@ -29,8 +29,11 @@ Tick the box and the row's two sloped sides sweep in, wipe the task off the list
 meet as a check and drift away while the rest slides up. The task is saved the
 moment you tick it, so the flourish never stands between you and the next one.
 
-**What did I do today?** in the header lists everything you closed and every
-progress-log entry you wrote, for today or any earlier day.
+**What did I do today?** in the header lists everything you closed, every meeting
+on your Outlook calendar, and every progress-log entry you wrote, for today or any
+earlier day. Meetings are read live from the calendar each time you open it, so
+they need Outlook connected; declined and cancelled ones are left out, and each
+of the rest is marked accepted, tentative, no reply, or one you organized.
 
 **Quick add** drops the new task at the top of the list; `⇧↵` sends it to the
 bottom instead. It accepts inline shorthand:
@@ -125,8 +128,10 @@ In the [Azure portal](https://portal.azure.com) → *Microsoft Entra ID* → *Ap
 1. Name it anything (`rodeo`). Accounts: *this organizational directory only* is fine.
 2. No redirect URI needed.
 3. Open *Authentication* → *Advanced settings* → set **Allow public client flows** to **Yes**.
-4. Open *API permissions* → add **Mail.Read**, **Tasks.Read**, **User.Read** (delegated).
-   If your tenant requires admin consent, ask your admin to grant it.
+4. Open *API permissions* → add **Mail.Read**, **Tasks.Read**, **User.Read**,
+   **Calendars.Read** (delegated). If your tenant requires admin consent, ask your
+   admin to grant it. Adding a permission later doesn't extend a sign-in you
+   already made — click **Connect** again to consent to it.
 5. Copy the *Application (client) ID* and *Directory (tenant) ID* into `config.json`:
 
 ```json
@@ -177,6 +182,7 @@ Useful if you want Claude (or anything else) to read and update your list.
 | method | path | notes |
 | --- | --- | --- |
 | `GET` | `/api/state` | everything the UI renders: tasks, deps, notes, integration status |
+| `GET` | `/api/recap/meetings?day=YYYY-MM-DD` | that day's Outlook meetings; `available: false` with a reason when it can't ask |
 | `POST` | `/api/tasks` | `{title, due_date, estimate_hours, priority, source_type, parent_id, blocked_by}` |
 | `PATCH` | `/api/tasks/:id` | partial update of any field |
 | `DELETE` | `/api/tasks/:id` | cascades to subtasks |
