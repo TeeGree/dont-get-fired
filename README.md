@@ -22,7 +22,8 @@ same list in reverse, newest first. A task is `todo`, `blocked`, or `done` —
 there is no in-between state to maintain.
 
 Drag any row by its body to reorder it; drop it below the last row to send it to
-the bottom. Click a title to rename it in place — `↵` or clicking away keeps the
+the bottom, or onto the trash in the bottom-right corner to delete it. The trash
+doesn't ask twice and takes any subtasks with it — the drag is the deliberate part. Click a title to rename it in place — `↵` or clicking away keeps the
 edit, `Esc` throws it out. `✎` opens the full editor inline beneath the row.
 
 Tick the box and the row's two sloped sides sweep in, wipe the task off the list,

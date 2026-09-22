@@ -323,6 +323,34 @@ function bindEndZone() {
   });
 }
 
+/** Drop a row on the trash and it goes, subtasks with it. */
+function bindTrash() {
+  const trash = $('#trash');
+
+  trash.addEventListener('dragover', (e) => {
+    if (dragId == null) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    trash.classList.add('over');
+  });
+  trash.addEventListener('dragleave', (e) => {
+    if (trash.contains(e.relatedTarget)) return;
+    trash.classList.remove('over');
+  });
+  trash.addEventListener('drop', (e) => {
+    e.preventDefault();
+    trash.classList.remove('over');
+    // The row is about to be torn out, and a dragend on a removed element never
+    // arrives — leaving the trash lit. Undo the drag state here as well.
+    document.body.classList.remove('dragging-task');
+    // dragend fires after this and clears dragId, so read the task while it lasts.
+    const t = state.byId.get(dragId);
+    // The native drag image dies at the cursor, so the swirl has to start there —
+    // using the row's list slot would send the task back to where you picked it up.
+    if (t) deleteTask(t, document.querySelector('.row.dragging'), { x: e.clientX, y: e.clientY });
+  });
+}
+
 /* ---------- rendering ---------- */
 
 function render() {
@@ -462,10 +490,12 @@ function renderRow(t, kidCount, isCollapsed, isHit) {
       e.dataTransfer.effectAllowed = 'move';
       e.dataTransfer.setData('text/plain', `R-${t.id}`);
       e.currentTarget.classList.add('dragging');
+      document.body.classList.add('dragging-task');
     } : null,
     ondragend: draggable ? (e) => {
       dragId = null;
       e.currentTarget.classList.remove('dragging');
+      document.body.classList.remove('dragging-task');
       clearDropMarks();
     } : null,
     ondragover: (e) => {
@@ -521,9 +551,7 @@ function renderRow(t, kidCount, isCollapsed, isHit) {
         onclick: (e) => { e.stopPropagation(); toggleExpand(t.id); },
       }),
       h('button', { class: 'iconbtn', text: '↳', title: 'Add subtask',
-        onclick: (e) => { e.stopPropagation(); addSubtask(t.id); } }),
-      h('button', { class: 'iconbtn', text: '✕', title: 'Delete',
-        onclick: (e) => { e.stopPropagation(); removeTask(t); } })),
+        onclick: (e) => { e.stopPropagation(); addSubtask(t.id); } })),
     h('span', { class: 'edge l' }),
     h('span', { class: 'edge r' }),
   );
@@ -785,7 +813,7 @@ function renderEditor(t, row) {
     h('div', { class: 'roweditor-foot' },
       h('div', { class: 'hint', text: `Created ${new Date(t.created_at).toLocaleString()}${t.completed_at ? ` · closed ${new Date(t.completed_at).toLocaleString()}` : ''}` }),
       h('div', { style: 'display:flex; gap:6px' },
-        h('button', { class: 'btn danger sm', text: 'Delete task', onclick: () => removeTask(t) }),
+        h('button', { class: 'btn danger sm', text: 'Delete task', onclick: () => removeTask(t, row) }),
         h('button', { class: 'btn sm', text: 'Collapse', onclick: () => toggleExpand(t.id) }))),
   ];
   return h('div', { class: 'roweditor' }, ...parts.filter(Boolean));
@@ -915,14 +943,103 @@ async function addSubtask(parentId) {
   } catch (err) { toast(err.message, true); }
 }
 
-async function removeTask(t) {
+async function removeTask(t, row) {
   const kids = childrenOf(t.id);
   const warning = kids.length ? `\n\nThis also deletes ${kids.length} subtask${kids.length > 1 ? 's' : ''} beneath it.` : '';
   if (!confirm(`Delete R-${t.id} "${t.title}"?${warning}`)) return;
-  await api('DELETE', `/api/tasks/${t.id}`);
-  for (const id of subtree(t).map((x) => x.id)) state.expanded.delete(id);
+  await deleteTask(t, row);
+}
+
+const SUCK = 680;
+
+/**
+ * A fixed clone rides into the can so the list can close the gap underneath.
+ * After a drag the native ghost dies at the cursor, so `origin` is that drop
+ * point — starting from the row's list slot would send it back first. Without
+ * an origin (the editor's Delete), the row itself is the start.
+ */
+function playSuck(wrap, origin) {
+  const trash = $('#trash');
+  const from = wrap.getBoundingClientRect();
+  const can = trash.getBoundingClientRect();
+  const mouth = { x: can.left + can.width / 2, y: can.top + can.height * 0.28 };
+  const start = origin ?? { x: from.left + from.width / 2, y: from.top + from.height / 2 };
+  // In-hand after a drag: a full-width row at the cursor would cover the can.
+  const startScale = origin ? 0.36 : 1;
+
+  const ghost = wrap.cloneNode(true);
+  ghost.querySelectorAll('.dragging').forEach((el) => el.classList.remove('dragging'));
+  Object.assign(ghost.style, {
+    position: 'fixed',
+    left: `${start.x - from.width / 2}px`,
+    top: `${start.y - Math.min(from.height, 48) / 2}px`,
+    width: `${from.width}px`, height: `${from.height}px`,
+    margin: '0', zIndex: '60', pointerEvents: 'none',
+    transformOrigin: '50% 20%',
+  });
+  document.body.append(ghost);
+
+  const dx = mouth.x - start.x;
+  const dy = mouth.y - start.y;
+  // A drop is already on the can, so the path is short — the swirl radius is
+  // what makes it read as a spin-in rather than a 20px fade.
+  const swirl = 52;
+
+  const at = (p, turns, scale) => {
+    const falloff = 1 - p;
+    const angle = turns * Math.PI * 2;
+    const sx = Math.cos(angle) * swirl * falloff;
+    const sy = Math.sin(angle) * swirl * falloff;
+    return `translate(${dx * p + sx}px, ${dy * p + sy}px) scale(${scale}) rotate(${turns * 360}deg)`;
+  };
+
+  const flight = ghost.animate([
+    { offset: 0, transform: at(0, 0, startScale), opacity: 1 },
+    { offset: 0.28, transform: at(0.22, 0.35, startScale * 0.78), opacity: 1 },
+    { offset: 0.55, transform: at(0.5, 0.75, startScale * 0.42), opacity: 0.95 },
+    { offset: 0.8, transform: at(0.82, 1.15, 0.1), opacity: 0.7 },
+    { offset: 1, transform: at(1, 1.55, 0.02), opacity: 0 },
+  ], { duration: SUCK, easing: 'cubic-bezier(.2, .7, .3, 1)', fill: 'forwards' });
+
+  wrap.style.overflow = 'hidden';
+  wrap.animate({ height: [`${from.height}px`, '0px'], opacity: [0, 0] },
+    { duration: SUCK, easing: 'cubic-bezier(.45, .05, .25, 1)', fill: 'forwards' });
+
+  setTimeout(() => trash.animate([
+    { transform: 'scale(1) translateY(0)' },
+    { transform: 'scale(1.06, .9) translateY(4px)' },
+    { transform: 'scale(.97, 1.04) translateY(-2px)' },
+    { transform: 'scale(1) translateY(0)' },
+  ], { duration: 340, easing: 'ease-out' }), SUCK - 140);
+
+  return flight.finished.finally(() => ghost.remove());
+}
+
+/**
+ * Delete with nothing asked first — the trash expects the drag to have been the
+ * deliberate part. The toast is the only trace left, so it names what went.
+ */
+async function deleteTask(t, row, origin) {
+  const ids = subtree(t).map((x) => x.id);
+  const wrap = row?.parentElement;
+  const play = wrap && !matchMedia('(prefers-reduced-motion: reduce)').matches
+    ? playSuck(wrap, origin)
+    : Promise.resolve();
+
+  try {
+    await api('DELETE', `/api/tasks/${t.id}`);
+  } catch (err) {
+    // The row is already gone from view, so let the list rebuild and put it back.
+    await play;
+    await refresh();
+    return toast(err.message, true);
+  }
+  for (const id of ids) state.expanded.delete(id);
   persistExpanded();
+  await play;
   await refresh();
+  const kids = ids.length - 1;
+  toast(`Deleted R-${t.id}${kids ? ` and ${kids} subtask${kids > 1 ? 's' : ''}` : ''}`);
 }
 
 /* ---------- settings / sync ---------- */
@@ -1228,6 +1345,7 @@ function openRecap(day, { pickDate = false } = {}) {
 /* ---------- wiring ---------- */
 
 bindEndZone();
+bindTrash();
 
 async function quickAdd(place) {
   const input = $('#quickadd-input');

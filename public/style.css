@@ -254,6 +254,22 @@ header.top {
   content: ""; display: block; height: 2px; border-radius: 2px; background: var(--accent);
 }
 
+/* a standing drop target. it sits over the list, so it stays click-through until
+   a drag is actually in flight — reachable by dragging and no other way. */
+.trash {
+  position: fixed; right: 20px; bottom: 16px; z-index: 50;
+  width: 104px; height: 124px; object-fit: contain;
+  transform-origin: 50% 100%;
+  opacity: .5; pointer-events: none; user-select: none; -webkit-user-drag: none;
+  filter: drop-shadow(0 8px 10px rgba(0, 0, 0, .35));
+  transition: opacity .15s, transform .15s, filter .15s;
+}
+body.dragging-task .trash { opacity: 1; pointer-events: auto; }
+.trash.over {
+  transform: scale(1.1);
+  filter: drop-shadow(0 0 16px var(--dang)) drop-shadow(0 8px 10px rgba(0, 0, 0, .4));
+}
+
 .twisty {
   border: 0; background: transparent; color: var(--ink-3); cursor: pointer;
   width: 16px; padding: 0; margin-top: 2px; font-size: 10px; line-height: 1; flex-shrink: 0;
