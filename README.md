@@ -1,4 +1,4 @@
-# 🐂 rodeo
+# 🔥 Don't Get Fired
 
 A local, single-page task wrangler. Everything lives on your machine in a SQLite file —
 no accounts, no cloud, no npm dependencies. It pulls open work from Jira and Outlook
@@ -126,12 +126,12 @@ search box works here, so narrow it to whatever you actually want to track.
 Outlook uses Microsoft Graph, which needs an app registration in your tenant.
 In the [Azure portal](https://portal.azure.com) → *Microsoft Entra ID* → *App registrations* → *New registration*:
 
-1. Name it anything (`rodeo`). Accounts: *this organizational directory only* is fine.
+1. Name it anything (`Don't Get Fired`). Accounts: *this organizational directory only* is fine.
 2. Redirect URI → platform **Mobile and desktop applications**, custom URI
    `http://localhost:4444/api/integrations/outlook/callback`. It has to match
    `redirectUri` in `config.json` character for character.
 3. Open *Authentication* → *Advanced settings* → leave **Allow public client flows**
-   set to **No**. That switch is for the device-code flow; rodeo uses the
+   set to **No**. That switch is for the device-code flow; this app uses the
    authorization-code flow with PKCE, which doesn't need it — and doesn't need a
    client secret either.
 4. Open *API permissions* → add **Mail.Read**, **Tasks.Read**, **User.Read**,
@@ -169,6 +169,18 @@ reading list plus a narrow slice of work, not a whole inbox.
   kind of task, **eCrash Support** (🚗, neutral grey), and leaves the strip, because
   from then on it lives in one place and not two. Dropping the same message twice
   is refused rather than duplicated.
+- **The drop fetches the whole message.** The card only ever holds Graph's
+  `bodyPreview`, which stops after a couple of hundred characters; the moment you
+  drop it, the full body is pulled and stored as the task's description, quoted
+  thread and all. Descriptions hold up to 50,000 characters (see
+  `MAX_DESCRIPTION` in `server/tasks.js`). If the body can't be fetched the drop
+  still succeeds, falling back to the short preview.
+
+Descriptions that big don't belong in every refresh, so `/api/state` leaves them
+out and sends `has_description` instead — the text is fetched when you open a
+task's editor, and kept once fetched. Search still covers them: the browser
+matches titles, notes and references itself, and asks the server which
+descriptions match, so results land in two passes rather than one.
 - **Unread mail sits in a strip above the task list**, always on screen, scrolled
   sideways — one card per message, newest first. It is read live from Graph and
   never stored, so reading a message in Outlook drops it off the strip. Nothing
@@ -206,7 +218,7 @@ calendar, because the recap reads the work account.
 | field | what it does |
 | --- | --- |
 | `label` | what the account is called in the ⚙ panel and the Unread header |
-| `flaggedCategory` | the category a flagged mail must carry to become a task. **Case-sensitive** — Outlook treats `Taylor` and `taylor` as different categories, and so does rodeo. Set it to `null` to take every flagged mail, the way the first account behaves |
+| `flaggedCategory` | the category a flagged mail must carry to become a task. **Case-sensitive** — Outlook treats `Taylor` and `taylor` as different categories, and so does this app. Set it to `null` to take every flagged mail, the way the first account behaves |
 | `flaggedMail` | `false` (the default here) means sync imports nothing and dragging is the only way in. Set `true` to have flagged mail imported automatically, the way the first account works |
 | `flaggedCategory` | only consulted when `flaggedMail` is on: which flagged mail a sync imports. Case-sensitive. Empty or `null` means all of it |
 | `taskLabel` | what a dragged-in message is called once it's a task |
@@ -227,13 +239,13 @@ before you click through; signing the wrong mailbox in is the usual mishap here.
 
 Sync is deliberately timid about your edits.
 
-| rodeo owns | the provider owns |
+| the app owns | the provider owns |
 | --- | --- |
 | status, notes, progress log, parent, dependencies, priority | title, description, link, remote status |
 
 A due date or estimate from the provider is only used to *fill a blank* — once you
 set one locally it's yours. Issues that are already closed are never imported. When
-a tracked issue closes upstream, its rodeo task is marked done (turn that off with
+a tracked issue closes upstream, its local task is marked done (turn that off with
 `"mirrorClosed": false`).
 
 ## Where the data lives
@@ -241,7 +253,7 @@ a tracked issue closes upstream, its rodeo task is marked done (turn that off wi
 `data/rodeo.db` — a plain SQLite file, gitignored. Back it up by copying it, or:
 
 ```bash
-curl -s localhost:4444/api/export > ~/Desktop/rodeo-backup.json
+curl -s localhost:4444/api/export > ~/Desktop/dont-get-fired-backup.json
 ```
 
 Inspect it directly any time with `sqlite3 data/rodeo.db`.
@@ -254,6 +266,8 @@ Useful if you want Claude (or anything else) to read and update your list.
 | --- | --- | --- |
 | `GET` | `/api/state` | everything the UI renders: tasks, deps, notes, integration status |
 | `GET` | `/api/recap/meetings?day=YYYY-MM-DD` | that day's Outlook meetings; `available: false` with a reason when it can't ask |
+| `GET` | `/api/tasks/:id/description` | one task's description — the list payload leaves it out |
+| `GET` | `/api/search?q=` | ids whose description matches; the browser searches titles and notes itself |
 | `POST` | `/api/unread/task` | turn one unread message into an eCrash Support task; `409` if it's already on the list |
 | `GET` | `/api/unread` | unread mail from the second account, read live; `available: false` with a reason when it can't ask, plus `configured` so the strip knows whether to stay hidden |
 | `POST` | `/api/tasks` | `{title, due_date, estimate_hours, priority, source_type, parent_id, blocked_by}` |
@@ -273,22 +287,22 @@ curl -s localhost:4444/api/tasks -H 'Content-Type: application/json' \
 
 ## Keep it running
 
-To have rodeo start at login, save this as
-`~/Library/LaunchAgents/com.local.rodeo.plist` and run
-`launchctl load ~/Library/LaunchAgents/com.local.rodeo.plist`:
+To have it start at login, save this as
+`~/Library/LaunchAgents/com.local.dont-get-fired.plist` and run
+`launchctl load ~/Library/LaunchAgents/com.local.dont-get-fired.plist`:
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0"><dict>
-  <key>Label</key><string>com.local.rodeo</string>
+  <key>Label</key><string>com.local.dont-get-fired</string>
   <key>ProgramArguments</key>
   <array>
     <string>/usr/local/bin/node</string>
-    <string>REPLACE_WITH_PATH/rodeo/server/index.js</string>
+    <string>REPLACE_WITH_PATH/dont-get-fired/server/index.js</string>
   </array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
 </dict></plist>
 ```
 
-Point `ProgramArguments` at your actual node binary (`which node`) and rodeo path.
+Point `ProgramArguments` at your actual node binary (`which node`) and the app's path.

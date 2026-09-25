@@ -1,4 +1,4 @@
-/* rodeo — single-page task wrangler */
+/* Don't Get Fired — single-page task wrangler */
 
 const state = {
   tasks: [],
@@ -10,6 +10,11 @@ const state = {
   mailCollapsed: localStorage.getItem('rodeo.mailCollapsed') === '1',
   query: '',
   expanded: new Set(JSON.parse(localStorage.getItem('rodeo.expanded') || '[]')),
+  // Descriptions are no longer in the list payload — an email task's can run to
+  // tens of thousands of characters. Fetched when an editor opens, kept after.
+  descriptions: new Map(),
+  // ids whose description matches the current search, answered by the server
+  queryDescIds: new Set(),
   collapsed: new Set(JSON.parse(localStorage.getItem('rodeo.collapsed') || '[]')),
 };
 
@@ -242,8 +247,34 @@ function matchesView(t) {
 function matchesQuery(t) {
   const q = state.query.trim().toLowerCase();
   if (!q) return true;
-  return [t.title, t.description, t.notes, t.source_ref, `r-${t.id}`]
+  // Description is the one field the browser no longer holds; the server says
+  // which tasks it matched, and that set arrives a moment after the local ones.
+  if (state.queryDescIds.has(t.id)) return true;
+  return [t.title, t.notes, t.source_ref, `r-${t.id}`]
     .some((f) => (f || '').toLowerCase().includes(q));
+}
+
+/**
+ * Ask the server which descriptions match, then redraw.
+ *
+ * Deliberately a second pass: the local fields answer while you're still typing,
+ * and the text buried in an email thread catches up a beat later. Out-of-order
+ * replies are dropped, so a slow request can't overwrite a newer keystroke.
+ */
+let descSearchToken = 0;
+async function loadDescriptionMatches() {
+  const q = state.query.trim();
+  const token = ++descSearchToken;
+  if (!q) {
+    if (state.queryDescIds.size) { state.queryDescIds = new Set(); renderTree(); }
+    return;
+  }
+  try {
+    const { ids } = await api('GET', `/api/search?q=${encodeURIComponent(q)}`);
+    if (token !== descSearchToken) return;
+    state.queryDescIds = new Set(ids);
+    renderTree();
+  } catch { /* the local matches still stand */ }
 }
 
 /** ids to render: direct hits plus every ancestor, so the tree keeps its shape */
@@ -541,7 +572,7 @@ function renderMailStrip() {
     retry ? h('button', { class: 'btn sm', text: 'Try again', onclick: loadUnread }) : null);
 
   const body = () => {
-    if (unread.status === 'unavailable') return note(unread.detail || 'rodeo did not say why.', true);
+    if (unread.status === 'unavailable') return note(unread.detail || "No reason given.", true);
     if (unread.status === 'loading' && !unread.messages.length) return note('Checking the mailbox…');
     if (!unread.messages.length) return note('Nothing unread.');
     return railScroll(h('div', { class: 'mailstrip-rail' }, ...unread.messages.map(mailCard)));
@@ -928,6 +959,44 @@ function notePreview(t) {
   return line.length > 140 ? `${line.slice(0, 139)}…` : line;
 }
 
+/**
+ * The description box, filled in when the text arrives.
+ *
+ * It starts disabled rather than empty-and-editable: typing into a box that is
+ * about to be overwritten by the fetch would quietly lose what you wrote. Once
+ * loaded it's cached, so reopening the editor is instant and a refresh in the
+ * background doesn't send it back to the server for text it already has.
+ */
+function descriptionBox(t, onInput) {
+  const cached = state.descriptions.get(t.id);
+  const box = h('textarea', {
+    rows: 3,
+    value: cached ?? '',
+    oninput: (e) => { state.descriptions.set(t.id, e.target.value); onInput(e); },
+  });
+
+  if (cached != null) return box;
+  if (!t.has_description) { state.descriptions.set(t.id, ''); return box; }
+
+  box.disabled = true;
+  box.placeholder = 'Loading…';
+  api('GET', `/api/tasks/${t.id}/description`)
+    .then(({ description }) => {
+      state.descriptions.set(t.id, description);
+      // The editor may have been closed, or the row redrawn, while this was away.
+      if (!box.isConnected) return;
+      box.value = description;
+      box.disabled = false;
+      box.placeholder = '';
+    })
+    .catch((err) => {
+      if (!box.isConnected) return;
+      box.disabled = false;
+      box.placeholder = `Could not load it — ${err.message}`;
+    });
+  return box;
+}
+
 /* ---------- inline editor ---------- */
 
 /**
@@ -981,7 +1050,7 @@ function renderEditor(t, row) {
         'Keep at top of the list'))),
     t.recur_rule ? h('div', { class: 'hint', text: 'Ticking this done closes it and opens a fresh copy for the next occurrence.' }) : null,
 
-    field('Description', h('textarea', { value: t.description, rows: 3, oninput: typed('description') })),
+    field('Description', descriptionBox(t, typed('description'))),
 
     h('div', { class: 'section-title', text: 'Notes' }),
     field('Scratchpad', h('textarea', { value: t.notes, rows: 4, placeholder: 'Anything you want to remember about this one…', oninput: typed('notes') })),
@@ -1267,7 +1336,7 @@ function openSettings() {
     ...rows,
     h('div', { class: 'section-title', text: 'Setup' }),
     h('div', { class: 'hint' },
-      'Edit ', h('code', { text: 'config.json' }), ' in the rodeo folder (copy ',
+      'Edit ', h('code', { text: 'config.json' }), ' in the app folder (copy ',
       h('code', { text: 'config.example.json' }), ' to start), then restart the server. ',
       'See README.md for the Jira token and Entra app-registration steps.'),
     h('div', { class: 'modal-actions' },
@@ -1350,6 +1419,7 @@ async function runSync(only) {
   btn.textContent = '⟳ Syncing…';
   try {
     const results = await api('POST', '/api/sync', only ? { only } : {});
+    state.descriptions.clear();
     await refresh();
     const parts = results.map((r) => {
       if (r.error) return `${r.provider}: ${r.error}`;
@@ -1579,6 +1649,7 @@ $('#views').addEventListener('click', (e) => {
 $('#search').addEventListener('input', debounce((e) => {
   state.query = e.target.value;
   renderTree();
+  loadDescriptionMatches();
 }, 150));
 
 $('#btn-recap-today').addEventListener('click', () => openRecap(todayStr()));

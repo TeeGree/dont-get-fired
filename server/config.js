@@ -85,7 +85,7 @@ export function loadConfig() {
   try {
     return deepMerge(structuredClone(DEFAULTS), JSON.parse(readFileSync(CONFIG_PATH, 'utf8')));
   } catch (err) {
-    console.error(`[rodeo] config.json is not valid JSON — using defaults (${err.message})`);
+    console.error(`[dont-get-fired] config.json is not valid JSON — using defaults (${err.message})`);
     return structuredClone(DEFAULTS);
   }
 }

@@ -138,9 +138,9 @@ export function createOutlook({ id, label, requiredScopes, sourceType = id }) {
       if (pending) { pending.status = 'error'; pending.error = msg; }
       return page('Sign-in failed', msg);
     };
-    if (pending?.status !== 'pending') return page('Nothing to do', `No sign-in is in progress for ${label}. Click Connect in rodeo first.`);
+    if (pending?.status !== 'pending') return page('Nothing to do', `No sign-in is in progress for ${label}. Click Connect in Don't Get Fired first.`);
     if (params.get('error')) return fail(params.get('error_description') || params.get('error'));
-    if (params.get('state') !== pending.state) return fail('State did not match — rodeo did not start this sign-in.');
+    if (params.get('state') !== pending.state) return fail("State did not match — Don't Get Fired did not start this sign-in.");
     const code = params.get('code');
     if (!code) return fail('Microsoft did not return an authorization code.');
 
@@ -161,7 +161,7 @@ export function createOutlook({ id, label, requiredScopes, sourceType = id }) {
 
     store(cfg, data);
     pending = { status: 'complete', account: readToken()?.account };
-    return page('Connected', `rodeo is signed in to ${label} as ${pending.account || 'your account'}. You can close this tab.`);
+    return page('Connected', `Signed in to ${label} as ${pending.account || 'your account'}. You can close this tab.`);
   }
 
   /** Poll once. Returns {status:'pending'|'complete'} so the UI can drive the loop. */
@@ -364,6 +364,31 @@ export function createOutlook({ id, label, requiredScopes, sourceType = id }) {
       }));
   }
 
+  /**
+   * One message with its whole body.
+   *
+   * The list queries carry bodyPreview, which Graph truncates to a couple of
+   * hundred characters — enough for a card, useless for a thread. The full body
+   * only comes back when you ask for one message on its own, and the Prefer
+   * header is what gets it as text instead of a wall of Outlook's HTML.
+   */
+  async function fetchMessage(cfg, id) {
+    const select = 'id,subject,from,webLink,receivedDateTime,body';
+    const m = await graph(cfg, `/me/messages/${encodeURIComponent(id)}?$select=${select}`, {
+      Prefer: 'outlook.body-content-type="text"',
+    });
+    const raw = (m.body?.content || '').trim();
+    return {
+      id: m.id,
+      subject: m.subject?.trim() || '(no subject)',
+      from: m.from?.emailAddress?.name || m.from?.emailAddress?.address || 'unknown sender',
+      url: m.webLink || null,
+      received: m.receivedDateTime ?? null,
+      // Some mailboxes hand back HTML regardless of what was preferred.
+      body: m.body?.contentType === 'html' ? htmlToText(raw) : raw,
+    };
+  }
+
   /* ---------- calendar ---------- */
 
   /**
@@ -419,7 +444,7 @@ export function createOutlook({ id, label, requiredScopes, sourceType = id }) {
     id, label, sourceType, CALLBACK_PATH,
     configured, describe, hasToken, signOut,
     startLogin, handleCallback, pollLogin,
-    fetchItems, fetchUnread, fetchMeetings,
+    fetchItems, fetchUnread, fetchMessage, fetchMeetings,
   };
 }
 
@@ -447,6 +472,27 @@ function decodeAccount(jwt) {
 /** The three shapes Graph uses to say "not that query" — all worth retrying simpler. */
 const rejectedQuery = (err) => /too complex|InefficientFilter|Graph 400/i.test(err.message);
 
+/**
+ * Outlook's HTML, flattened into something worth reading in a textarea. Not a
+ * parser and not trying to be: block tags become line breaks, everything else
+ * goes, and the handful of entities that actually turn up get decoded.
+ */
+function htmlToText(html) {
+  return html
+    .replace(/<(style|script|head)[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|tr|li|h[1-6]|blockquote|table)>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&lt;/gi, '<').replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"').replace(/&#39;|&apos;/gi, "'")
+    .replace(/&amp;/gi, '&')  // last, so "&amp;lt;" doesn't become "<"
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 /** OData escapes a quote by doubling it; a category is free text and can hold one. */
 const categoryFilter = (name) => `categories/any(c:c eq '${name.replace(/'/g, "''")}')`;
 
@@ -457,9 +503,9 @@ function rsvp(event) {
 }
 
 function page(heading, detail) {
-  return `<!doctype html><meta charset="utf-8"><title>rodeo</title>
+  return `<!doctype html><meta charset="utf-8"><title>Don't Get Fired</title>
 <body style="font:15px/1.5 system-ui;margin:0;display:grid;place-items:center;height:100vh">
-<div style="text-align:center;max-width:44ch"><h2>🐂 ${heading}</h2><p>${detail}</p></div>`;
+<div style="text-align:center;max-width:44ch"><h2>🔥 ${heading}</h2><p>${detail}</p></div>`;
 }
 
 function dateOnly(iso) {

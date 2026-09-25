@@ -94,7 +94,7 @@ function migrate() {
       db.exec(MIGRATIONS[v]);
       db.exec(`PRAGMA user_version = ${v + 1}`);
       db.exec('COMMIT');
-      console.log(`[rodeo] applied migration ${v + 1}`);
+      console.log(`[dont-get-fired] applied migration ${v + 1}`);
     } catch (err) {
       db.exec('ROLLBACK');
       throw err;

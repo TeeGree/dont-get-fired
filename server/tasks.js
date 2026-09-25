@@ -3,6 +3,16 @@ import { db } from './db.js';
 export const STATUSES = ['todo', 'blocked', 'done'];
 export const PRIORITIES = ['low', 'normal', 'high', 'urgent'];
 export const SOURCES = ['brain', 'jira', 'outlook', 'ecrash', 'other'];
+
+/**
+ * How much text a description or a notes field may hold.
+ *
+ * Generous on purpose: a dragged-in email carries the whole thread, quoted
+ * history and all, and truncating that loses exactly the part you kept it for.
+ * Every task is still handed to the browser whole by /api/state, so this is the
+ * knob to turn down if the list ever starts feeling heavy.
+ */
+export const MAX_DESCRIPTION = 50_000;
 const CLOSED = new Set(['done']);
 
 const now = () => new Date().toISOString();
@@ -117,6 +127,9 @@ function clean(patch, { partial = false } = {}) {
   for (const k of ['description', 'notes', 'source_ref', 'source_url']) {
     if (has(k)) out[k] = patch[k] == null ? (k === 'description' || k === 'notes' ? '' : null) : String(patch[k]).trim();
   }
+  for (const k of ['description', 'notes']) {
+    if (out[k]?.length > MAX_DESCRIPTION) bad(`${k} is too long (max ${MAX_DESCRIPTION})`);
+  }
   if (out.source_url) {
     // allow http(s) and outlook/ms-protocol style links, reject javascript: etc.
     if (!/^(https?:|ms-outlook:|mailto:|onenote:|msteams:)/i.test(out.source_url)) {
@@ -170,6 +183,32 @@ function clean(patch, { partial = false } = {}) {
 
 /* ---------- reads ---------- */
 
+const selectDescription = db.prepare('SELECT id, description FROM tasks WHERE id = ?');
+
+/** The text snapshot() leaves behind, fetched when an editor opens. */
+export function description(id) {
+  const row = selectDescription.get(id);
+  if (!row) throw new HttpError(404, `no task ${id}`);
+  return row;
+}
+
+const searchDescriptions = db.prepare(
+  "SELECT id FROM tasks WHERE description <> '' AND instr(lower(description), lower(?)) > 0"
+);
+
+/**
+ * Which tasks have a description matching this text.
+ *
+ * The browser still searches titles, notes and references itself — it holds those.
+ * Description is the one field it no longer has, so that search happens here and
+ * comes back as bare ids for the client to fold into its own filter.
+ */
+export function idsMatchingDescription(q) {
+  const needle = String(q ?? '').trim();
+  if (!needle) return [];
+  return searchDescriptions.all(needle).map((r) => r.id);
+}
+
 const selectAll = db.prepare('SELECT * FROM tasks ORDER BY sort_order, id');
 const selectOne = db.prepare('SELECT * FROM tasks WHERE id = ?');
 const selectDeps = db.prepare('SELECT task_id, depends_on_id FROM deps');
@@ -182,9 +221,19 @@ export function getTask(id) {
 }
 
 /** Full snapshot the UI renders from: tasks + dependency edges + note entries. */
+/**
+ * Every task, without its description.
+ *
+ * A dragged-in email carries its whole thread, so descriptions can run to tens of
+ * thousands of characters — and this snapshot is rebuilt on every refresh, for
+ * every task, when at most one of them is open in an editor. `has_description`
+ * is all the list needs; the text itself is fetched when something asks to see it.
+ */
 export function snapshot() {
-  const tasks = selectAll.all().map((t) => ({
-    ...t, archived: !!t.archived, pinned: !!t.pinned, tags: extractTags(t.title),
+  const tasks = selectAll.all().map(({ description, ...t }) => ({
+    ...t,
+    has_description: Boolean(description),
+    archived: !!t.archived, pinned: !!t.pinned, tags: extractTags(t.title),
   }));
   const byId = new Map(tasks.map((t) => [t.id, t]));
 

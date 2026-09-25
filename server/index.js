@@ -68,6 +68,9 @@ const routes = [
     meta: { statuses: T.STATUSES, priorities: T.PRIORITIES, sources: T.SOURCES },
   })],
 
+  ['GET', /^\/api\/tasks\/(\d+)\/description$/, (m) => T.description(Number(m[1]))],
+  ['GET', /^\/api\/search$/, (m, body, query) => ({ ids: T.idsMatchingDescription(query.get('q')) })],
+
   ['GET', /^\/api\/tags$/, () => T.tagSummary()],
   ['PUT', /^\/api\/tags\/([A-Za-z][A-Za-z0-9_-]*)$/, (m, body) => T.setTagColor(m[1], body.color)],
 
@@ -143,7 +146,7 @@ async function unreadMail() {
  * The wording is built here rather than in the browser so the account's taskLabel
  * stays the one source of truth for what its mail is called.
  */
-function mailToTask(msg) {
+async function mailToTask(msg) {
   const account = providers.outlook2;
   const cfg = loadConfig().outlook2;
   if (!account.configured(cfg)) throw new T.HttpError(400, account.describe(cfg));
@@ -155,10 +158,24 @@ function mailToTask(msg) {
     throw new T.HttpError(409, 'that email is already on the list');
   }
 
-  const from = String(msg.from || 'unknown sender').trim() || 'unknown sender';
+  let from = String(msg.from || 'unknown sender').trim() || 'unknown sender';
+  let title = String(msg.subject || '(no subject)');
+  // The card only ever had Graph's bodyPreview, which stops after a couple of
+  // hundred characters. Now that this is becoming work, go and get the thread.
+  let body = String(msg.preview || '').trim();
+  try {
+    const full = await account.fetchMessage(cfg, msg.id);
+    if (full.body) body = full.body;
+    if (full.subject) title = full.subject;
+    if (full.from) from = full.from;
+  } catch (err) {
+    // Losing the long body is a shame; losing the drop would be worse.
+    console.error("[dont-get-fired] couldn't read the full message body:", err.message);
+  }
+
   return T.createTask({
-    title: String(msg.subject || '(no subject)'),
-    description: `From ${from}\n\n${String(msg.preview || '').trim()}`.slice(0, 4000),
+    title,
+    description: `From ${from}\n\n${body}`.slice(0, T.MAX_DESCRIPTION),
     source_type: account.sourceType,
     source_ref: cfg.taskLabel ? `${cfg.taskLabel} · ${from}` : `Email from ${from}`,
     source_url: msg.url || null,
@@ -213,7 +230,7 @@ async function serveStatic(res, pathname) {
 }
 
 const server = createServer(async (req, res) => {
-  if (!localOnly(req)) return send(res, 403, { error: 'rodeo only serves local requests' });
+  if (!localOnly(req)) return send(res, 403, { error: "Don't Get Fired only serves local requests" });
   const { pathname, searchParams } = new URL(req.url, `http://${HOST}`);
   try {
     // Entra sends the browser here, so this one answers with a page, not JSON.
@@ -227,11 +244,11 @@ const server = createServer(async (req, res) => {
     return await serveStatic(res, pathname);
   } catch (err) {
     const code = err.status ?? 500;
-    if (code >= 500) console.error('[rodeo]', err);
+    if (code >= 500) console.error('[dont-get-fired]', err);
     send(res, code, { error: err.message || 'internal error' });
   }
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`\n  🐂 rodeo is running — http://${HOST}:${PORT}\n`);
+  console.log(`\n  🔥 Don't Get Fired is running — http://${HOST}:${PORT}\n`);
 });

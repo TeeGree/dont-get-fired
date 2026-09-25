@@ -1,5 +1,5 @@
 {
-  "name": "rodeo",
+  "name": "dont-get-fired",
   "version": "0.1.0",
   "private": true,
   "description": "Local task tracker with Jira/Outlook integration hooks",
@@ -9,5 +9,7 @@
     "start": "node --no-warnings server/index.js",
     "dev": "node --no-warnings --watch server/index.js"
   },
-  "engines": { "node": ">=22.5" }
+  "engines": {
+    "node": ">=22.5"
+  }
 }
