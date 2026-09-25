@@ -4,7 +4,7 @@ import { extname, join, normalize } from 'node:path';
 import { ROOT } from './db.js';
 import { loadConfig, redactedConfig, CONFIG_PATH } from './config.js';
 import * as T from './tasks.js';
-import { syncAll, status as integrationStatus, providers, mailAccounts } from './integrations/index.js';
+import { syncAll, status as integrationStatus, providers, mailAccounts, trackedExternalIds } from './integrations/index.js';
 
 const PUBLIC = join(ROOT, 'public');
 const HOST = '127.0.0.1';
@@ -92,6 +92,7 @@ const routes = [
 
   ['GET', /^\/api\/recap\/meetings$/, (m, body, query) => meetingsForDay(query.get('day'))],
   ['GET', /^\/api\/unread$/, () => unreadMail()],
+  ['POST', /^\/api\/unread\/task$/, (m, body) => mailToTask(body)],
 
   ['GET', /^\/api\/export$/, () => ({ exported_at: new Date().toISOString(), tasks: T.snapshot() })],
 ];
@@ -122,15 +123,47 @@ async function unreadMail() {
   if (cfg.unread === false) return off('unread is switched off in config.json', false);
   if (!account.hasToken()) return off('not signed in — \u2699 \u2192 Connect');
   try {
+    const tracked = trackedExternalIds(account.sourceType);
     return {
       available: true,
       configured: true,
       account: cfg.label || account.label,
-      messages: await account.fetchUnread(cfg),
+      messages: await account.fetchUnread(cfg, { tracked }),
     };
   } catch (err) {
     return off(err.message);
   }
+}
+
+/**
+ * Turn one unread message into a task, because someone dragged it onto the list.
+ *
+ * Mail from this account is never imported on a sync — dragging is the whole act
+ * of deciding it is work, and a list that fills itself is one you stop reading.
+ * The wording is built here rather than in the browser so the account's taskLabel
+ * stays the one source of truth for what its mail is called.
+ */
+function mailToTask(msg) {
+  const account = providers.outlook2;
+  const cfg = loadConfig().outlook2;
+  if (!account.configured(cfg)) throw new T.HttpError(400, account.describe(cfg));
+  if (!msg?.id) throw new T.HttpError(400, 'message id is required');
+
+  const externalId = `mail:${msg.id}`;
+  // The unique index would catch this anyway, but as a 500 reading like a crash.
+  if (trackedExternalIds(account.sourceType).has(externalId)) {
+    throw new T.HttpError(409, 'that email is already on the list');
+  }
+
+  const from = String(msg.from || 'unknown sender').trim() || 'unknown sender';
+  return T.createTask({
+    title: String(msg.subject || '(no subject)'),
+    description: `From ${from}\n\n${String(msg.preview || '').trim()}`.slice(0, 4000),
+    source_type: account.sourceType,
+    source_ref: cfg.taskLabel ? `${cfg.taskLabel} · ${from}` : `Email from ${from}`,
+    source_url: msg.url || null,
+    external_id: externalId,
+  });
 }
 
 /**

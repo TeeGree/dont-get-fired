@@ -261,6 +261,7 @@ function visibleIds() {
 /* ---------- drag to reorder ---------- */
 
 let dragId = null;
+let dragMail = null;   // the unread message being dragged onto the list, if any
 let lastRootId = null; // bottom of the list as currently rendered
 
 /** The closed view sorts by completion date, and a search shows a partial list. */
@@ -353,6 +354,49 @@ function bindEndZone() {
   });
 }
 
+/**
+ * Drop a card from the unread strip anywhere on the list and it becomes a task.
+ *
+ * Bound on the pane rather than on rows, so the whole list is one target — there
+ * is no right place to drop an email, only the decision that it is work now.
+ * The row handlers ignore a mail drag (they all check dragId), so the event
+ * reaches here whether it lands on a row or the empty space below one.
+ */
+function bindMailDrop() {
+  const pane = document.querySelector('.list-pane');
+
+  pane.addEventListener('dragover', (e) => {
+    if (!dragMail) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    pane.classList.add('mail-drop');
+  });
+  pane.addEventListener('dragleave', (e) => {
+    if (!pane.contains(e.relatedTarget)) pane.classList.remove('mail-drop');
+  });
+  pane.addEventListener('drop', (e) => {
+    if (!dragMail) return;
+    e.preventDefault();
+    pane.classList.remove('mail-drop');
+    // dragend clears dragMail and can land first, so take a copy now.
+    taskFromMail(dragMail);
+  });
+}
+
+async function taskFromMail(m) {
+  try {
+    await api('POST', '/api/unread/task', {
+      id: m.id, subject: m.subject, from: m.from, preview: m.preview, url: m.url,
+    });
+    toast(`Added “${m.subject}”`);
+    // It's tracked now, so the next read drops it off the strip by itself.
+    await refresh();
+    await loadUnread();
+  } catch (err) {
+    toast(err.message, true);
+  }
+}
+
 /** Drop a row on the trash and it goes, subtasks with it. */
 function bindTrash() {
   const trash = $('#trash');
@@ -434,6 +478,21 @@ function mailCard(m) {
   const props = {
     class: `mailcard${m.flagged ? ' flagged' : ''}`,
     title: [m.subject, m.from, m.preview].filter(Boolean).join('\n'),
+    draggable: true,
+    ondragstart: (e) => {
+      dragMail = m;
+      e.dataTransfer.effectAllowed = 'copy';
+      // An <a> would otherwise drag its own href; say what this is instead.
+      e.dataTransfer.setData('text/plain', m.subject);
+      e.currentTarget.classList.add('dragging');
+      document.body.classList.add('dragging-mail');
+    },
+    ondragend: (e) => {
+      dragMail = null;
+      e.currentTarget.classList.remove('dragging');
+      document.body.classList.remove('dragging-mail');
+      document.querySelector('.list-pane')?.classList.remove('mail-drop');
+    },
   };
   if (m.url) Object.assign(props, { href: m.url, target: '_blank', rel: 'noopener noreferrer' });
 
@@ -592,7 +651,7 @@ function renderRow(t, kidCount, isCollapsed, isHit) {
     chips.push(h('span', { class: 'chip gate', text: `⛔ needs ${t.gated_by.map((id) => 'R-' + id).join(', ')}` }));
   }
   if (t.source_type !== 'brain') {
-    const label = t.source_ref || t.source_type;
+    const label = t.source_ref || sourceLabel(t.source_type);
     const text = `${sourceIcon(t.source_type)} ${label}`;
     if (t.source_url) {
       const link = h('a', { class: `chip src-${t.source_type}`, href: t.source_url, target: '_blank',
@@ -844,7 +903,13 @@ function editTitleInPlace(t, titleEl) {
   input.select();
 }
 
-const sourceIcon = (s) => ({ jira: '🔷', outlook: '✉️', outlook2: '📨', other: '🔗' }[s] || '🧠');
+const sourceIcon = (s) => ({ jira: '🔷', outlook: '✉️', ecrash: '🚗', other: '🔗' }[s] || '🧠');
+
+/* A source's name in the database isn't what it's called out loud. */
+const SOURCE_LABELS = {
+  brain: 'Brain', jira: 'Jira', outlook: 'Outlook', ecrash: 'eCrash Support', other: 'Other',
+};
+const sourceLabel = (s) => SOURCE_LABELS[s] || s;
 
 const RECUR_DAYS = [
   ['mon', 'Monday'], ['tue', 'Tuesday'], ['wed', 'Wednesday'], ['thu', 'Thursday'],
@@ -875,7 +940,7 @@ function renderEditor(t, row) {
   const patch = (field) => (e) => save(t.id, { [field]: e.target.value });
   const typed = (field) => debounce((e) => quietSave(t.id, { [field]: e.target.value }), 500);
 
-  const opts = (list, current) => list.map((v) => h('option', { value: v, text: v, selected: v === current }));
+  const opts = (list, current) => list.map((v) => h('option', { value: v, text: sourceLabel(v), selected: v === current }));
 
   const otherTasks = state.tasks
     .filter((x) => x.id !== t.id)
@@ -1336,7 +1401,7 @@ function recapChips(t) {
   const chips = [];
   if (t.estimate_hours) chips.push(h('span', { class: 'chip est', text: `⏱ ${t.estimate_hours}h` }));
   if (t.source_type !== 'brain') {
-    const label = t.source_ref || t.source_type;
+    const label = t.source_ref || sourceLabel(t.source_type);
     chips.push(t.source_url
       ? h('a', { class: `chip src-${t.source_type}`, href: t.source_url, target: '_blank', rel: 'noopener noreferrer',
                  text: `${sourceIcon(t.source_type)} ${label}` })
@@ -1478,6 +1543,7 @@ function openRecap(day, { pickDate = false } = {}) {
 
 bindEndZone();
 bindTrash();
+bindMailDrop();
 
 async function quickAdd(place) {
   const input = $('#quickadd-input');

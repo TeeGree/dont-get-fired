@@ -39,11 +39,15 @@
       "Mail.Read",
       "User.Read"
     ],
-    "flaggedMail": true,
+    "flaggedMail": false,
     "flaggedCategory": "Taylor",
+    "taskLabel": "eCrash Support",
     "unread": true,
     "unreadFolder": "inbox",
     "unreadMax": 100,
+    "unreadExcludeCategories": [
+      "Nickie"
+    ],
     "maxResults": 50,
     "mirrorClosed": true
   }

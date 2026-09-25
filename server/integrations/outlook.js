@@ -35,7 +35,7 @@ const authority = (cfg) => `https://login.microsoftonline.com/${cfg.tenantId || 
  * `requiredScopes` are the ones rodeo asks for whatever config.json says; see
  * scopeList below for why.
  */
-export function createOutlook({ id, label, requiredScopes }) {
+export function createOutlook({ id, label, requiredScopes, sourceType = id }) {
   const TOKEN_PATH = join(ROOT, 'data', `${id}-token.json`);
   const CALLBACK_PATH = `/api/integrations/${id}/callback`;
 
@@ -272,7 +272,10 @@ export function createOutlook({ id, label, requiredScopes }) {
           external_id: `mail:${m.id}`,
           title: m.subject?.trim() || '(no subject)',
           description: `From ${from}\n\n${(m.bodyPreview || '').trim()}`.slice(0, 4000),
-          source_ref: `Email from ${from}`,
+          // An account with a taskLabel says what kind of work its mail is, not
+          // merely that it was mail. Sync rewrites this every time, so renaming it
+          // in config.json relabels the tasks already in the list.
+          source_ref: cfg.taskLabel ? `${cfg.taskLabel} · ${from}` : `Email from ${from}`,
           source_url: m.webLink || null,
           external_status: m.flag?.flagStatus ?? null,
           due_date: dateOnly(m.flag?.dueDateTime?.dateTime),
@@ -319,8 +322,15 @@ export function createOutlook({ id, label, requiredScopes }) {
    *
    * Scoped to the inbox by default — "all unread" otherwise sweeps in Junk and
    * whatever a rule filed away years ago. Set unreadFolder to "all" for the lot.
+   *
+   * Two things are sieved out afterwards rather than in the query: categories in
+   * `unreadExcludeCategories`, and anything `tracked` says is already a task. Graph
+   * takes a negated categories/any() badly, and "is this a task" is a fact about
+   * rodeo's database that Graph could not answer anyway. The cost is that the page
+   * is trimmed after `unreadMax` rather than before, so a heavily filtered mailbox
+   * shows fewer than the maximum — raise it if that bites.
    */
-  async function fetchUnread(cfg) {
+  async function fetchUnread(cfg, { tracked = new Set() } = {}) {
     const top = cfg.unreadMax ?? cfg.maxResults ?? 50;
     const folder = (cfg.unreadFolder ?? 'inbox').trim();
     const base = !folder || folder === 'all'
@@ -336,17 +346,22 @@ export function createOutlook({ id, label, requiredScopes }) {
       data = await graph(cfg, path);
     }
 
-    return (data.value ?? []).map((m) => ({
-      id: m.id,
-      subject: m.subject?.trim() || '(no subject)',
-      from: m.from?.emailAddress?.name || m.from?.emailAddress?.address || 'unknown sender',
-      from_address: m.from?.emailAddress?.address || null,
-      received: m.receivedDateTime ?? null,
-      preview: (m.bodyPreview || '').trim().slice(0, 300),
-      categories: m.categories ?? [],
-      flagged: m.flag?.flagStatus === 'flagged',
-      url: m.webLink || null,
-    }));
+    const excluded = (cfg.unreadExcludeCategories ?? []).filter(Boolean);
+    const setAside = (m) => (m.categories ?? []).some((c) => excluded.includes(c));
+
+    return (data.value ?? [])
+      .filter((m) => !setAside(m) && !tracked.has(`mail:${m.id}`))
+      .map((m) => ({
+        id: m.id,
+        subject: m.subject?.trim() || '(no subject)',
+        from: m.from?.emailAddress?.name || m.from?.emailAddress?.address || 'unknown sender',
+        from_address: m.from?.emailAddress?.address || null,
+        received: m.receivedDateTime ?? null,
+        preview: (m.bodyPreview || '').trim().slice(0, 300),
+        categories: m.categories ?? [],
+        flagged: m.flag?.flagStatus === 'flagged',
+        url: m.webLink || null,
+      }));
   }
 
   /* ---------- calendar ---------- */
@@ -401,7 +416,7 @@ export function createOutlook({ id, label, requiredScopes }) {
   }
 
   return {
-    id, label, CALLBACK_PATH,
+    id, label, sourceType, CALLBACK_PATH,
     configured, describe, hasToken, signOut,
     startLogin, handleCallback, pollLogin,
     fetchItems, fetchUnread, fetchMeetings,
@@ -465,4 +480,6 @@ export const outlook2 = createOutlook({
   id: 'outlook2',
   label: 'Outlook (second account)',
   requiredScopes: ['offline_access', 'Mail.Read'],
+  // Its mail becomes its own kind of work, not "a task from account two".
+  sourceType: 'ecrash',
 });

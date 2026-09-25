@@ -19,7 +19,11 @@
   --info-soft: #e9f0fa;
   /* where a task came from: email, own head, QAD board, anywhere else */
   --src-email: #2b5f9e;
-  --src-email-2: #3f8f7a;
+  /* dark enough that the chip's text still reads on its own soft background —
+     a lighter grey drops that pairing to about 2.8:1. The row wash is this mixed
+     13% into the panel, so it stays an almost-white grey either way. */
+  --src-ecrash: #5c6169;
+  --src-ecrash-soft: #eceef1;
   --src-brain: #c2247c;
   --src-qad: #c02e1d;
   --src-qad-soft: #fbe8e5;
@@ -59,7 +63,8 @@
     --info: #7fb0e8;
     --info-soft: #1a2431;
     --src-email: #7fb0e8;
-  --src-email-2: #6fcfb4;
+  --src-ecrash: #d8dade;
+  --src-ecrash-soft: #2b2d31;
     --src-brain: #ff6ec7;
     --src-qad: #ff4d3d;
     --src-qad-soft: #33201b;
@@ -214,7 +219,7 @@ header.top {
 .row[draggable="true"]:active { cursor: grabbing; }
 .row.src-brain { --src-color: var(--src-brain); }
 .row.src-outlook { --src-color: var(--src-email); }
-.row.src-outlook2 { --src-color: var(--src-email-2); }
+.row.src-ecrash { --src-color: var(--src-ecrash); }
 .row.src-jira { --src-color: var(--src-qad); }
 /* a tagged row wears its tag's colour, so the source moves to a stripe down the left */
 .row.tagged { padding-left: 22px; }
@@ -326,7 +331,7 @@ body.dragging-task .trash { opacity: 1; pointer-events: auto; }
 .chip.gate { background: var(--dang-soft); color: var(--dang); border-color: transparent; }
 .chip.src-jira { background: var(--src-qad-soft); color: var(--src-qad); border-color: transparent; }
 .chip.src-outlook { background: var(--info-soft); color: var(--src-email); border-color: transparent; }
-.chip.src-outlook2 { background: var(--ok-soft); color: var(--src-email-2); border-color: transparent; }
+.chip.src-ecrash { background: var(--src-ecrash-soft); color: var(--src-ecrash); border-color: transparent; }
 .chip.st-blocked { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
 .chip.st-done { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
 .chip.pinned { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
@@ -429,6 +434,15 @@ a.chip:hover { text-decoration: underline; }
 }
 .tagrow .count { color: var(--ink-3); font-size: 12px; }
 
+/* the list is one target for a dragged email, so the whole pane answers */
+.list-pane.mail-drop #tree {
+  outline: 2px dashed color-mix(in srgb, var(--accent) 60%, transparent);
+  outline-offset: 4px; border-radius: 6px;
+}
+.mailcard.dragging { opacity: .45; }
+body.dragging-mail .mailcard { cursor: grab; }
+.mailcard { cursor: grabbing; }
+
 /* ---------- unread mail strip ---------- */
 
 /* Sits above the list in every view. Quieter than a task row on purpose: this is
@@ -441,8 +455,8 @@ a.chip:hover { text-decoration: underline; }
 .mailstrip-head { display: flex; align-items: center; gap: 7px; font-size: 12.5px; padding-bottom: 8px; }
 .mailstrip-head b { font-size: 12.5px; }
 .mailstrip-head .count {
-  font: 600 11px var(--mono); color: var(--src-email-2);
-  background: var(--ok-soft); border-radius: 20px; padding: 1px 7px;
+  font: 600 11px var(--mono); color: var(--src-ecrash);
+  background: var(--src-ecrash-soft); border-radius: 20px; padding: 1px 7px;
 }
 .mailstrip-note { display: flex; align-items: center; gap: 10px; color: var(--ink-3); font-size: 12.5px; padding: 0 2px 12px; }
 
@@ -463,12 +477,12 @@ a.chip:hover { text-decoration: underline; }
   scroll-snap-align: start;
   display: block; text-decoration: none; color: inherit;
   padding: 8px 10px; border-radius: 9px;
-  border: 1px solid color-mix(in srgb, var(--src-email-2) 22%, var(--line));
-  background: color-mix(in srgb, var(--src-email-2) 6%, var(--panel));
+  border: 1px solid color-mix(in srgb, var(--src-ecrash) 22%, var(--line));
+  background: color-mix(in srgb, var(--src-ecrash) 6%, var(--panel));
   transition: border-color .15s, transform .15s;
 }
 a.mailcard:hover {
-  border-color: color-mix(in srgb, var(--src-email-2) 55%, var(--line-2));
+  border-color: color-mix(in srgb, var(--src-ecrash) 55%, var(--line-2));
   transform: translateY(-1px);
 }
 /* a flagged one is a task waiting to happen, so it wears the warning colour */

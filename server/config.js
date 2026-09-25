@@ -47,15 +47,23 @@ const DEFAULTS = {
     tenantId: 'common',
     redirectUri: 'http://localhost:4444/api/integrations/outlook2/callback',
     scopes: ['offline_access', 'Mail.Read', 'User.Read'],
-    flaggedMail: true,
-    // only flagged mail carrying this category becomes a task. Outlook categories
-    // are case-sensitive, so this has to match the one in Outlook exactly.
-    // Empty or null means every flagged mail, the way the first account behaves.
+    // Off: nothing from this account arrives by itself. Mail becomes a task when
+    // you drag it out of the strip, and not before. Turn it on to have flagged
+    // mail imported on every sync the way the first account does.
+    flaggedMail: false,
+    // which flagged mail a sync would import, if flaggedMail were on. Outlook
+    // categories are case-sensitive, so this has to match the one in Outlook
+    // exactly. Empty or null means every flagged mail.
     flaggedCategory: 'Taylor',
+    // what its flagged mail becomes in the task list
+    taskLabel: 'eCrash Support',
     // the unread strip. 'inbox' keeps Junk and filed mail out; 'all' sweeps the lot
     unread: true,
     unreadFolder: 'inbox',
     unreadMax: 100,
+    // mail carrying any of these categories never reaches the strip — someone
+    // else's to deal with, or already triaged. Case-sensitive, like the others.
+    unreadExcludeCategories: ['Nickie'],
     // no calendar: the recap reads the work account
     todo: false,
     maxResults: 50,

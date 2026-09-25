@@ -77,6 +77,13 @@ const MIGRATIONS = [
     color TEXT NOT NULL
   );
   `,
+  // 5 — mail from the second account lands as its own kind of work, "eCrash
+  // Support", rather than under the account's name. Sync finds an existing task
+  // by (source_type, external_id), so tasks pulled in before this have to come
+  // along — left behind they'd be invisible to sync and imported a second time.
+  `
+  UPDATE tasks SET source_type = 'ecrash' WHERE source_type = 'outlook2';
+  `,
 ];
 
 function migrate() {

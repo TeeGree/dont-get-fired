@@ -163,15 +163,23 @@ Flagged mail becomes a task with a link straight back to the message. Turn on
 `outlook2` is a second mailbox, and it works differently from the first: it is a
 reading list plus a narrow slice of work, not a whole inbox.
 
-- **Flagged mail in one category becomes a task.** Only mail that is both flagged
-  *and* carries the category named by `flaggedCategory` lands in the main list.
-  Everything else flagged over there is ignored.
+- **Nothing arrives by itself.** Sync never imports from this account. A message
+  becomes work when you **drag its card out of the strip and drop it on the list**
+  — anywhere on the list; there's no particular spot to hit. It lands as its own
+  kind of task, **eCrash Support** (🚗, neutral grey), and leaves the strip, because
+  from then on it lives in one place and not two. Dropping the same message twice
+  is refused rather than duplicated.
 - **Unread mail sits in a strip above the task list**, always on screen, scrolled
   sideways — one card per message, newest first. It is read live from Graph and
   never stored, so reading a message in Outlook drops it off the strip. Nothing
   in it becomes a task. Collapse it with the ▾ and it stays collapsed, keeping
   just the count; refresh it with the ⟳, though it also refreshes itself every
   five minutes and whenever you come back to the window.
+- **Two kinds of mail never reach the strip:** anything carrying a category in
+  `unreadExcludeCategories`, and anything already dragged onto the list. The second
+  is the point at which a message stops being something to read and starts being
+  something to do, so it appears in one place, never both — including after you
+  finish the task, since you've already dealt with it.
 
 It needs its **own app registration**, in whichever tenant that mailbox lives in.
 Same steps as above, with two differences: the redirect URI ends in `outlook2`, and
@@ -186,9 +194,11 @@ calendar, because the recap reads the work account.
     "clientId": "00000000-0000-0000-0000-000000000000",
     "tenantId": "00000000-0000-0000-0000-000000000000",
     "redirectUri": "http://localhost:4444/api/integrations/outlook2/callback",
-    "flaggedCategory": "Taylor",
+    "flaggedMail": false,
+    "taskLabel": "eCrash Support",
     "unread": true,
-    "unreadFolder": "inbox"
+    "unreadFolder": "inbox",
+    "unreadExcludeCategories": ["Nickie"]
   }
 }
 ```
@@ -197,7 +207,11 @@ calendar, because the recap reads the work account.
 | --- | --- |
 | `label` | what the account is called in the ⚙ panel and the Unread header |
 | `flaggedCategory` | the category a flagged mail must carry to become a task. **Case-sensitive** — Outlook treats `Taylor` and `taylor` as different categories, and so does rodeo. Set it to `null` to take every flagged mail, the way the first account behaves |
+| `flaggedMail` | `false` (the default here) means sync imports nothing and dragging is the only way in. Set `true` to have flagged mail imported automatically, the way the first account works |
+| `flaggedCategory` | only consulted when `flaggedMail` is on: which flagged mail a sync imports. Case-sensitive. Empty or `null` means all of it |
+| `taskLabel` | what a dragged-in message is called once it's a task |
 | `unread` | set `false` to hide the unread strip entirely |
+| `unreadExcludeCategories` | categories that keep a message off the strip — someone else's to deal with, or already triaged. Case-sensitive, and sieved after the fetch, so a heavily filtered mailbox shows fewer than `unreadMax` |
 | `unreadFolder` | `"inbox"` keeps Junk and filed mail out; `"all"` sweeps every folder |
 | `unreadMax` | how many unread messages to fetch (default 100) |
 
@@ -240,6 +254,7 @@ Useful if you want Claude (or anything else) to read and update your list.
 | --- | --- | --- |
 | `GET` | `/api/state` | everything the UI renders: tasks, deps, notes, integration status |
 | `GET` | `/api/recap/meetings?day=YYYY-MM-DD` | that day's Outlook meetings; `available: false` with a reason when it can't ask |
+| `POST` | `/api/unread/task` | turn one unread message into an eCrash Support task; `409` if it's already on the list |
 | `GET` | `/api/unread` | unread mail from the second account, read live; `available: false` with a reason when it can't ask, plus `configured` so the strip knows whether to stay hidden |
 | `POST` | `/api/tasks` | `{title, due_date, estimate_hours, priority, source_type, parent_id, blocked_by}` |
 | `PATCH` | `/api/tasks/:id` | partial update of any field |

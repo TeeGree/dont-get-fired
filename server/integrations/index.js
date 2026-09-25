@@ -8,6 +8,13 @@ export const providers = { jira, outlook, outlook2 };
 /** The mailbox accounts, for the routes that are about signing in rather than syncing. */
 export const mailAccounts = [outlook, outlook2];
 
+/**
+ * What a provider's tasks are filed under. Usually its own name — but the second
+ * mailbox files its mail as 'ecrash', because what matters about those tasks is
+ * the kind of work they are, not which account they arrived through.
+ */
+const sourceTypeOf = (p) => p.sourceType ?? p.id;
+
 export function status() {
   const cfg = loadConfig();
   return Object.values(providers).map((p) => ({
@@ -17,7 +24,7 @@ export function status() {
     enabled: Boolean(cfg[p.id]?.enabled),
     configured: p.configured(cfg[p.id]),
     detail: p.describe(cfg[p.id]),
-    last_sync: lastSync(p.id),
+    last_sync: lastSync(sourceTypeOf(p)),
   }));
 }
 
@@ -30,6 +37,22 @@ function lastSync(sourceType) {
 const findByExternal = db.prepare(
   'SELECT * FROM tasks WHERE source_type = ? AND external_id = ?'
 );
+
+const externalIds = db.prepare(
+  'SELECT external_id FROM tasks WHERE source_type = ? AND external_id IS NOT NULL'
+);
+
+/**
+ * Every external id rodeo already tracks for one source.
+ *
+ * The unread strip uses it to drop mail that is on the list below it — once an
+ * email is a task, showing it twice is just asking which copy is the real one.
+ * Completed tasks count too: you dealt with it, so it shouldn't come back up top
+ * merely because the message is still sitting unread in the mailbox.
+ */
+export function trackedExternalIds(sourceType) {
+  return new Set(externalIds.all(sourceType).map((r) => r.external_id));
+}
 
 /**
  * Pull items from every configured provider and upsert them.
@@ -52,7 +75,7 @@ export async function syncAll({ only } = {}) {
     }
     try {
       const items = await p.fetchItems(pcfg);
-      results.push({ provider: p.id, ...upsert(p.id, items, pcfg) });
+      results.push({ provider: p.id, ...upsert(sourceTypeOf(p), items, pcfg) });
     } catch (err) {
       results.push({ provider: p.id, error: err.message });
     }
