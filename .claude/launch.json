@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "rodeo",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": ["-c", "PORT=4455 node --no-warnings server/index.js"],
+      "port": 4455
+    }
+  ]
+}

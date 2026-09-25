@@ -4,7 +4,7 @@ import { extname, join, normalize } from 'node:path';
 import { ROOT } from './db.js';
 import { loadConfig, redactedConfig, CONFIG_PATH } from './config.js';
 import * as T from './tasks.js';
-import { syncAll, status as integrationStatus, providers } from './integrations/index.js';
+import { syncAll, status as integrationStatus, providers, mailAccounts } from './integrations/index.js';
 
 const PUBLIC = join(ROOT, 'public');
 const HOST = '127.0.0.1';
@@ -85,15 +85,53 @@ const routes = [
   ['GET', /^\/api\/integrations$/, () => integrationStatus()],
   ['POST', /^\/api\/sync$/, (m, body) => syncAll({ only: body.only })],
 
-  ['POST', /^\/api\/integrations\/outlook\/login$/, () =>
-    providers.outlook.startLogin(loadConfig().outlook)],
-  ['POST', /^\/api\/integrations\/outlook\/poll$/, () => providers.outlook.pollLogin()],
-  ['POST', /^\/api\/integrations\/outlook\/signout$/, () => providers.outlook.signOut()],
+  ['POST', /^\/api\/integrations\/(outlook2?)\/login$/, (m) =>
+    mailAccount(m[1]).startLogin(loadConfig()[m[1]])],
+  ['POST', /^\/api\/integrations\/(outlook2?)\/poll$/, (m) => mailAccount(m[1]).pollLogin()],
+  ['POST', /^\/api\/integrations\/(outlook2?)\/signout$/, (m) => mailAccount(m[1]).signOut()],
 
   ['GET', /^\/api\/recap\/meetings$/, (m, body, query) => meetingsForDay(query.get('day'))],
+  ['GET', /^\/api\/unread$/, () => unreadMail()],
 
   ['GET', /^\/api\/export$/, () => ({ exported_at: new Date().toISOString(), tasks: T.snapshot() })],
 ];
+
+function mailAccount(id) {
+  const account = mailAccounts.find((a) => a.id === id);
+  if (!account) throw new T.HttpError(404, `no such mail account: ${id}`);
+  return account;
+}
+
+/**
+ * Unread mail for the strip above the task list, read live on every request.
+ *
+ * Same shape as the recap's meetings, and for the same reason: `available: false`
+ * means rodeo couldn't ask, which is a different answer from an empty inbox.
+ *
+ * `configured` is what the strip needs on top of that. Nobody with one mailbox
+ * wants a permanent bar explaining that they haven't set up a second one, so a
+ * turned-off account is silent — but an account that is set up and broken has to
+ * say so, or the strip would just sit there looking empty.
+ */
+async function unreadMail() {
+  const account = providers.outlook2;
+  const cfg = loadConfig().outlook2;
+  const off = (detail, configured = true) => ({ available: false, configured, detail });
+
+  if (!account.configured(cfg)) return off(account.describe(cfg), false);
+  if (cfg.unread === false) return off('unread is switched off in config.json', false);
+  if (!account.hasToken()) return off('not signed in — \u2699 \u2192 Connect');
+  try {
+    return {
+      available: true,
+      configured: true,
+      account: cfg.label || account.label,
+      messages: await account.fetchUnread(cfg),
+    };
+  } catch (err) {
+    return off(err.message);
+  }
+}
 
 /**
  * The recap reads the calendar live rather than through sync: meetings are
@@ -146,8 +184,10 @@ const server = createServer(async (req, res) => {
   const { pathname, searchParams } = new URL(req.url, `http://${HOST}`);
   try {
     // Entra sends the browser here, so this one answers with a page, not JSON.
-    if (pathname === providers.outlook.CALLBACK_PATH) {
-      const html = await providers.outlook.handleCallback(loadConfig().outlook, searchParams);
+    // Each account has its own callback path, and only it can finish its sign-in.
+    const account = mailAccounts.find((a) => a.CALLBACK_PATH === pathname);
+    if (account) {
+      const html = await account.handleCallback(loadConfig()[account.id], searchParams);
       return send(res, 200, html, { 'Content-Type': 'text/html; charset=utf-8' });
     }
     if (pathname.startsWith('/api/')) return await handleApi(req, res, pathname, searchParams);

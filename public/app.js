@@ -7,10 +7,22 @@ const state = {
   tags: [],
   meta: { statuses: [], priorities: [], sources: [] },
   view: ['all', 'closed'].includes(localStorage.getItem('rodeo.view')) ? localStorage.getItem('rodeo.view') : 'all',
+  mailCollapsed: localStorage.getItem('rodeo.mailCollapsed') === '1',
   query: '',
   expanded: new Set(JSON.parse(localStorage.getItem('rodeo.expanded') || '[]')),
   collapsed: new Set(JSON.parse(localStorage.getItem('rodeo.collapsed') || '[]')),
 };
+
+/**
+ * Unread mail for the strip above the list. Read live and never stored — it is a
+ * reading list, not a backlog, and a copy of it would be wrong the moment you
+ * read something in Outlook. Nothing here ever reaches the database.
+ */
+const unread = { status: 'idle', detail: null, account: null, configured: false, messages: [], loadedAt: 0 };
+
+/** How long a strip is allowed to go stale before refocusing the window refetches it. */
+const MAIL_STALE_MS = 60_000;
+const MAIL_POLL_MS = 5 * 60_000;
 
 const CLOSED = new Set(['done']);
 const $ = (sel) => document.querySelector(sel);
@@ -68,6 +80,24 @@ async function refresh() {
   state.meta = data.meta;
   state.today = data.server_date;
   render();
+}
+
+async function loadUnread() {
+  if (unread.status === 'loading') return;
+  unread.status = 'loading';
+  renderMailStrip();
+  try {
+    const data = await api('GET', '/api/unread');
+    Object.assign(unread, data.available
+      ? { status: 'ready', messages: data.messages, account: data.account, configured: true, detail: null }
+      : { status: 'unavailable', messages: [], configured: Boolean(data.configured), detail: data.detail });
+  } catch (err) {
+    // A server that isn't answering is a rodeo problem, not a mailbox one, but
+    // the strip is the only place to say so.
+    Object.assign(unread, { status: 'unavailable', messages: [], configured: true, detail: err.message });
+  }
+  unread.loadedAt = Date.now();
+  renderMailStrip();
 }
 
 /* ---------- dates ---------- */
@@ -354,12 +384,16 @@ function bindTrash() {
 /* ---------- rendering ---------- */
 
 function render() {
+  renderMailStrip();
   renderStats();
   renderTree();
   document.querySelectorAll('#views button').forEach((b) => {
     b.setAttribute('aria-pressed', String(b.dataset.view === state.view));
   });
 }
+
+const stat = (label, value, cls = '') =>
+  h('div', { class: `stat ${cls}` }, h('b', { text: String(value) }), label);
 
 function renderStats() {
   const open = state.tasks.filter((t) => !CLOSED.has(t.status) && !isScheduled(t));
@@ -370,8 +404,6 @@ function renderStats() {
   const gated = open.filter((t) => t.gated_by.length);
   const weekHours = week.reduce((s, t) => s + (t.estimate_hours || 0), 0);
 
-  const stat = (label, value, cls = '') => h('div', { class: `stat ${cls}` }, h('b', { text: String(value) }), label);
-
   $('#stats').replaceChildren(...[
     stat('open', open.length),
     stat('due today', today.length, today.length ? 'warn' : ''),
@@ -380,6 +412,104 @@ function renderStats() {
     stat('hrs due this week', Math.round(weekHours * 10) / 10),
     scheduled.length ? stat('scheduled', scheduled.length) : null,
   ].filter(Boolean));
+}
+
+/** Today's mail is placed by the clock; anything older by the calendar. */
+function mailWhen(iso) {
+  if (!iso) return '';
+  return localDay(iso) === todayStr()
+    ? timeOfDay(iso)
+    : new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+/** One card in the rail. Not a task and deliberately not shaped like one. */
+function mailCard(m) {
+  const chips = [
+    m.flagged ? h('span', { class: 'chip flagged', text: '⚑' }) : null,
+    ...m.categories.map((c) => h('span', { class: 'chip', text: c })),
+  ].filter(Boolean);
+
+  // The card is only a link when there is somewhere to go; an <a> with no href
+  // reads as a link to a screen reader and then does nothing.
+  const props = {
+    class: `mailcard${m.flagged ? ' flagged' : ''}`,
+    title: [m.subject, m.from, m.preview].filter(Boolean).join('\n'),
+  };
+  if (m.url) Object.assign(props, { href: m.url, target: '_blank', rel: 'noopener noreferrer' });
+
+  return h(m.url ? 'a' : 'div', props,
+    h('div', { class: 'mailcard-top' },
+      h('span', { class: 'mailcard-from', text: m.from }),
+      h('time', { text: mailWhen(m.received) })),
+    h('div', { class: 'mailcard-subject', text: m.subject }),
+    m.preview ? h('div', { class: 'mailcard-preview', text: m.preview }) : null,
+    chips.length ? h('div', { class: 'chips' }, ...chips) : null);
+}
+
+/**
+ * A trackpad swipes sideways on its own, but a wheel only sends deltaY. Translate
+ * it — and hand the scroll back to the page at either end, so the strip doesn't
+ * trap the cursor on the way down the list.
+ */
+function railScroll(rail) {
+  rail.addEventListener('wheel', (e) => {
+    if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+    const room = rail.scrollWidth - rail.clientWidth;
+    if (room <= 0) return;
+    const atEnd = e.deltaY > 0 ? rail.scrollLeft >= room - 1 : rail.scrollLeft <= 0;
+    if (atEnd) return;
+    e.preventDefault();
+    rail.scrollLeft += e.deltaY;
+  }, { passive: false });
+  return rail;
+}
+
+/**
+ * The unread strip: always above the list, whichever view is on.
+ *
+ * It stays hidden entirely until there is a configured second account to talk
+ * about — one mailbox shouldn't mean a permanent bar about the one you don't have.
+ */
+function renderMailStrip() {
+  const el = $('#mailstrip');
+  if (unread.status === 'idle' || (unread.status === 'unavailable' && !unread.configured)) {
+    el.hidden = true;
+    return;
+  }
+  el.hidden = false;
+
+  const note = (text, retry) => h('div', { class: 'mailstrip-note' }, text,
+    retry ? h('button', { class: 'btn sm', text: 'Try again', onclick: loadUnread }) : null);
+
+  const body = () => {
+    if (unread.status === 'unavailable') return note(unread.detail || 'rodeo did not say why.', true);
+    if (unread.status === 'loading' && !unread.messages.length) return note('Checking the mailbox…');
+    if (!unread.messages.length) return note('Nothing unread.');
+    return railScroll(h('div', { class: 'mailstrip-rail' }, ...unread.messages.map(mailCard)));
+  };
+
+  const head = h('div', { class: 'mailstrip-head' },
+    h('button', {
+      class: 'twisty',
+      text: state.mailCollapsed ? '▸' : '▾',
+      'aria-expanded': String(!state.mailCollapsed),
+      title: state.mailCollapsed ? 'Show unread mail' : 'Hide unread mail',
+      onclick: () => {
+        state.mailCollapsed = !state.mailCollapsed;
+        localStorage.setItem('rodeo.mailCollapsed', state.mailCollapsed ? '1' : '');
+        renderMailStrip();
+      },
+    }),
+    h('b', { text: 'Unread' }),
+    unread.messages.length ? h('span', { class: 'count', text: String(unread.messages.length) }) : null,
+    h('span', { class: 'hint', text: unread.account || '' }),
+    h('span', { style: 'flex:1' }),
+    h('button', {
+      class: 'btn sm', text: '⟳', title: 'Check for new mail',
+      disabled: unread.status === 'loading', onclick: loadUnread,
+    }));
+
+  el.replaceChildren(...[head, state.mailCollapsed ? null : body()].filter(Boolean));
 }
 
 function renderTree() {
@@ -714,7 +844,7 @@ function editTitleInPlace(t, titleEl) {
   input.select();
 }
 
-const sourceIcon = (s) => ({ jira: '🔷', outlook: '✉️', other: '🔗' }[s] || '🧠');
+const sourceIcon = (s) => ({ jira: '🔷', outlook: '✉️', outlook2: '📨', other: '🔗' }[s] || '🧠');
 
 const RECUR_DAYS = [
   ['mon', 'Monday'], ['tue', 'Tuesday'], ['wed', 'Wednesday'], ['thu', 'Thursday'],
@@ -1060,8 +1190,8 @@ function openSettings() {
       h('b', { text: i.label }),
       h('span', { class: 'hint', text: i.detail }),
       h('span', { class: 'spacer', style: 'flex:1' }),
-      i.id === 'outlook' && i.enabled
-        ? h('button', { class: 'btn sm', text: 'Connect', onclick: connectOutlook })
+      i.id.startsWith('outlook') && i.enabled
+        ? h('button', { class: 'btn sm', text: 'Connect', onclick: () => connectOutlook(i.id, i.label) })
         : null,
       i.configured
         ? h('button', { class: 'btn sm', text: 'Sync', onclick: () => runSync(i.id) })
@@ -1112,14 +1242,15 @@ function openTags() {
       h('button', { class: 'btn', text: 'Close', onclick: () => $('#modal-root').replaceChildren() })));
 }
 
-async function connectOutlook() {
+async function connectOutlook(account = 'outlook', label = 'Outlook') {
   try {
-    const dc = await api('POST', '/api/integrations/outlook/login');
+    const dc = await api('POST', `/api/integrations/${account}/login`);
     window.open(dc.authorize_url, '_blank', 'noopener');
     let stopped = false;
     const close = openModal(
-      h('h3', { text: 'Connect Outlook' }),
-      h('div', { text: 'A Microsoft sign-in tab should have opened. Approve access there, then come back here.' }),
+      h('h3', { text: `Connect ${label}` }),
+      h('div', { text: 'A Microsoft sign-in tab should have opened. Approve access there, then come back here. '
+        + 'Pick the right account — Microsoft offers whoever it saw last.' }),
       h('a', { href: dc.authorize_url, target: '_blank', rel: 'noopener noreferrer', text: 'Open the sign-in page again' }),
       h('div', { class: 'hint', id: 'dc-status', text: 'Waiting for you to finish signing in…' }),
       h('div', { class: 'modal-actions' },
@@ -1130,12 +1261,13 @@ async function connectOutlook() {
       if (stopped) return;
       if (Date.now() > deadline) { $('#dc-status').textContent = 'Sign-in timed out — try again.'; return; }
       try {
-        const r = await api('POST', '/api/integrations/outlook/poll');
+        const r = await api('POST', `/api/integrations/${account}/poll`);
         if (r.status === 'complete') {
           close();
-          toast(`Outlook connected as ${r.account || 'your account'}`);
+          toast(`${label} connected as ${r.account || 'your account'}`);
           await refresh();
-          return runSync('outlook');
+          loadUnread();
+          return runSync(account);
         }
       } catch (err) {
         $('#dc-status').textContent = err.message;
@@ -1405,4 +1537,14 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 's') runSync();
 });
 
-refresh().catch((err) => toast(err.message, true));
+/* An always-visible list has to stay current on its own: a strip that quietly
+   went stale an hour ago is worse than no strip. Coming back to the window is the
+   moment it matters most, so that refetches unless it just ran. */
+window.addEventListener('focus', () => {
+  if (Date.now() - unread.loadedAt > MAIL_STALE_MS) loadUnread();
+});
+setInterval(() => { if (!document.hidden) loadUnread(); }, MAIL_POLL_MS);
+
+refresh()
+  .then(loadUnread)
+  .catch((err) => toast(err.message, true));

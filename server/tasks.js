@@ -2,7 +2,7 @@ import { db } from './db.js';
 
 export const STATUSES = ['todo', 'blocked', 'done'];
 export const PRIORITIES = ['low', 'normal', 'high', 'urgent'];
-export const SOURCES = ['brain', 'jira', 'outlook', 'other'];
+export const SOURCES = ['brain', 'jira', 'outlook', 'outlook2', 'other'];
 const CLOSED = new Set(['done']);
 
 const now = () => new Date().toISOString();

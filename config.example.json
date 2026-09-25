@@ -27,5 +27,24 @@
     "todo": false,
     "maxResults": 50,
     "mirrorClosed": true
+  },
+  "outlook2": {
+    "enabled": false,
+    "label": "Outlook (second account)",
+    "clientId": "",
+    "tenantId": "common",
+    "redirectUri": "http://localhost:4444/api/integrations/outlook2/callback",
+    "scopes": [
+      "offline_access",
+      "Mail.Read",
+      "User.Read"
+    ],
+    "flaggedMail": true,
+    "flaggedCategory": "Taylor",
+    "unread": true,
+    "unreadFolder": "inbox",
+    "unreadMax": 100,
+    "maxResults": 50,
+    "mirrorClosed": true
   }
 }

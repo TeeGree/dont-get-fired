@@ -19,6 +19,7 @@
   --info-soft: #e9f0fa;
   /* where a task came from: email, own head, QAD board, anywhere else */
   --src-email: #2b5f9e;
+  --src-email-2: #3f8f7a;
   --src-brain: #c2247c;
   --src-qad: #c02e1d;
   --src-qad-soft: #fbe8e5;
@@ -58,6 +59,7 @@
     --info: #7fb0e8;
     --info-soft: #1a2431;
     --src-email: #7fb0e8;
+  --src-email-2: #6fcfb4;
     --src-brain: #ff6ec7;
     --src-qad: #ff4d3d;
     --src-qad-soft: #33201b;
@@ -153,6 +155,8 @@ header.top {
 /* ---------- quick add ---------- */
 
 .quickadd { display: flex; gap: 8px; margin-bottom: 14px; }
+/* the bar's own display would otherwise win against [hidden] */
+.quickadd[hidden] { display: none; }
 .quickadd input {
   flex: 1; padding: 10px 13px; border-radius: var(--radius);
   border: 1px solid var(--line-2); background: var(--panel); box-shadow: var(--shadow);
@@ -210,6 +214,7 @@ header.top {
 .row[draggable="true"]:active { cursor: grabbing; }
 .row.src-brain { --src-color: var(--src-brain); }
 .row.src-outlook { --src-color: var(--src-email); }
+.row.src-outlook2 { --src-color: var(--src-email-2); }
 .row.src-jira { --src-color: var(--src-qad); }
 /* a tagged row wears its tag's colour, so the source moves to a stripe down the left */
 .row.tagged { padding-left: 22px; }
@@ -321,6 +326,7 @@ body.dragging-task .trash { opacity: 1; pointer-events: auto; }
 .chip.gate { background: var(--dang-soft); color: var(--dang); border-color: transparent; }
 .chip.src-jira { background: var(--src-qad-soft); color: var(--src-qad); border-color: transparent; }
 .chip.src-outlook { background: var(--info-soft); color: var(--src-email); border-color: transparent; }
+.chip.src-outlook2 { background: var(--ok-soft); color: var(--src-email-2); border-color: transparent; }
 .chip.st-blocked { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
 .chip.st-done { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
 .chip.pinned { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
@@ -422,6 +428,69 @@ a.chip:hover { text-decoration: underline; }
   border-radius: 5px; padding: 1px 5px;
 }
 .tagrow .count { color: var(--ink-3); font-size: 12px; }
+
+/* ---------- unread mail strip ---------- */
+
+/* Sits above the list in every view. Quieter than a task row on purpose: this is
+   a glance, not a queue — nothing in it is work rodeo is tracking. */
+.mailstrip {
+  margin-bottom: 14px; padding-bottom: 2px;
+  border-bottom: 1px solid var(--line);
+}
+.mailstrip[hidden] { display: none; }
+.mailstrip-head { display: flex; align-items: center; gap: 7px; font-size: 12.5px; padding-bottom: 8px; }
+.mailstrip-head b { font-size: 12.5px; }
+.mailstrip-head .count {
+  font: 600 11px var(--mono); color: var(--src-email-2);
+  background: var(--ok-soft); border-radius: 20px; padding: 1px 7px;
+}
+.mailstrip-note { display: flex; align-items: center; gap: 10px; color: var(--ink-3); font-size: 12.5px; padding: 0 2px 12px; }
+
+/* the rail itself — one row, scrolled sideways, cards snapping into place */
+.mailstrip-rail {
+  display: flex; gap: 9px; overflow-x: auto; overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity; padding: 1px 2px 12px;
+}
+.mailstrip-rail::-webkit-scrollbar { height: 7px; }
+.mailstrip-rail::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 4px; }
+.mailstrip-rail::-webkit-scrollbar-thumb:hover { background: var(--ink-3); }
+
+.mailcard {
+  /* min-width:auto is the flex default, and it would let the no-wrap preview line
+     push the card out to the width of its own text. 0 lets the basis actually hold,
+     and the preview ellipsises inside it the way it's meant to. */
+  flex: 0 0 248px; min-width: 0; overflow: hidden;
+  scroll-snap-align: start;
+  display: block; text-decoration: none; color: inherit;
+  padding: 8px 10px; border-radius: 9px;
+  border: 1px solid color-mix(in srgb, var(--src-email-2) 22%, var(--line));
+  background: color-mix(in srgb, var(--src-email-2) 6%, var(--panel));
+  transition: border-color .15s, transform .15s;
+}
+a.mailcard:hover {
+  border-color: color-mix(in srgb, var(--src-email-2) 55%, var(--line-2));
+  transform: translateY(-1px);
+}
+/* a flagged one is a task waiting to happen, so it wears the warning colour */
+.mailcard.flagged { border-left: 3px solid var(--warn); }
+.mailcard-top { display: flex; align-items: baseline; gap: 6px; }
+.mailcard-from {
+  flex: 1; min-width: 0; font-size: 11.5px; font-weight: 600; color: var(--ink-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mailcard-top time { font: 600 10.5px var(--mono); color: var(--ink-3); white-space: nowrap; }
+/* two lines of subject, then the preview — enough to know whether to open it */
+.mailcard-subject {
+  font-size: 12.5px; font-weight: 600; margin-top: 3px;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.mailcard-preview {
+  font-size: 11.5px; color: var(--ink-3); margin-top: 3px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mailcard .chips { margin-top: 5px; }
+.mailcard .chip { font-size: 10px; padding: 0 5px; }
+.chip.flagged { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
 
 /* ---------- daily recap ---------- */
 

@@ -1,15 +1,19 @@
 import { db } from '../db.js';
 import { loadConfig } from '../config.js';
 import * as jira from './jira.js';
-import * as outlook from './outlook.js';
+import { outlook, outlook2 } from './outlook.js';
 
-export const providers = { jira, outlook };
+export const providers = { jira, outlook, outlook2 };
+
+/** The mailbox accounts, for the routes that are about signing in rather than syncing. */
+export const mailAccounts = [outlook, outlook2];
 
 export function status() {
   const cfg = loadConfig();
   return Object.values(providers).map((p) => ({
     id: p.id,
-    label: p.label,
+    // A second mailbox is only ever "the second one" to rodeo; let config name it.
+    label: cfg[p.id]?.label?.trim() || p.label,
     enabled: Boolean(cfg[p.id]?.enabled),
     configured: p.configured(cfg[p.id]),
     detail: p.describe(cfg[p.id]),

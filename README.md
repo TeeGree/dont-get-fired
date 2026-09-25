@@ -127,8 +127,13 @@ Outlook uses Microsoft Graph, which needs an app registration in your tenant.
 In the [Azure portal](https://portal.azure.com) → *Microsoft Entra ID* → *App registrations* → *New registration*:
 
 1. Name it anything (`rodeo`). Accounts: *this organizational directory only* is fine.
-2. No redirect URI needed.
-3. Open *Authentication* → *Advanced settings* → set **Allow public client flows** to **Yes**.
+2. Redirect URI → platform **Mobile and desktop applications**, custom URI
+   `http://localhost:4444/api/integrations/outlook/callback`. It has to match
+   `redirectUri` in `config.json` character for character.
+3. Open *Authentication* → *Advanced settings* → leave **Allow public client flows**
+   set to **No**. That switch is for the device-code flow; rodeo uses the
+   authorization-code flow with PKCE, which doesn't need it — and doesn't need a
+   client secret either.
 4. Open *API permissions* → add **Mail.Read**, **Tasks.Read**, **User.Read**,
    **Calendars.Read** (delegated). If your tenant requires admin consent, ask your
    admin to grant it. Adding a permission later doesn't extend a sign-in you
@@ -147,11 +152,62 @@ In the [Azure portal](https://portal.azure.com) → *Microsoft Entra ID* → *Ap
 }
 ```
 
-Restart, click **⚙ → Connect**, and sign in with the device code it shows you.
+Restart, click **⚙ → Connect**, and approve access in the tab that opens.
 Tokens are cached in `data/outlook-token.json` (mode 600) and refreshed automatically.
 
 Flagged mail becomes a task with a link straight back to the message. Turn on
 `"todo": true` to also pull Microsoft To Do items.
+
+### A second Outlook account
+
+`outlook2` is a second mailbox, and it works differently from the first: it is a
+reading list plus a narrow slice of work, not a whole inbox.
+
+- **Flagged mail in one category becomes a task.** Only mail that is both flagged
+  *and* carries the category named by `flaggedCategory` lands in the main list.
+  Everything else flagged over there is ignored.
+- **Unread mail sits in a strip above the task list**, always on screen, scrolled
+  sideways — one card per message, newest first. It is read live from Graph and
+  never stored, so reading a message in Outlook drops it off the strip. Nothing
+  in it becomes a task. Collapse it with the ▾ and it stays collapsed, keeping
+  just the count; refresh it with the ⟳, though it also refreshes itself every
+  five minutes and whenever you come back to the window.
+
+It needs its **own app registration**, in whichever tenant that mailbox lives in.
+Same steps as above, with two differences: the redirect URI ends in `outlook2`, and
+the only delegated permissions it needs are **Mail.Read** and **User.Read** — no
+calendar, because the recap reads the work account.
+
+```json
+{
+  "outlook2": {
+    "enabled": true,
+    "label": "Outlook (personal)",
+    "clientId": "00000000-0000-0000-0000-000000000000",
+    "tenantId": "00000000-0000-0000-0000-000000000000",
+    "redirectUri": "http://localhost:4444/api/integrations/outlook2/callback",
+    "flaggedCategory": "Taylor",
+    "unread": true,
+    "unreadFolder": "inbox"
+  }
+}
+```
+
+| field | what it does |
+| --- | --- |
+| `label` | what the account is called in the ⚙ panel and the Unread header |
+| `flaggedCategory` | the category a flagged mail must carry to become a task. **Case-sensitive** — Outlook treats `Taylor` and `taylor` as different categories, and so does rodeo. Set it to `null` to take every flagged mail, the way the first account behaves |
+| `unread` | set `false` to hide the unread strip entirely |
+| `unreadFolder` | `"inbox"` keeps Junk and filed mail out; `"all"` sweeps every folder |
+| `unreadMax` | how many unread messages to fetch (default 100) |
+
+Set `tenantId` to that mailbox's directory ID for a work account, or `"common"`
+for a personal Microsoft account. Restart, then **⚙ → Connect** on the second row.
+Its tokens go in `data/outlook2-token.json`, entirely separate from the first
+account's — signing one out leaves the other alone.
+
+Microsoft will offer whichever account it saw last, so read the account picker
+before you click through; signing the wrong mailbox in is the usual mishap here.
 
 ### What sync will and won't touch
 
@@ -184,6 +240,7 @@ Useful if you want Claude (or anything else) to read and update your list.
 | --- | --- | --- |
 | `GET` | `/api/state` | everything the UI renders: tasks, deps, notes, integration status |
 | `GET` | `/api/recap/meetings?day=YYYY-MM-DD` | that day's Outlook meetings; `available: false` with a reason when it can't ask |
+| `GET` | `/api/unread` | unread mail from the second account, read live; `available: false` with a reason when it can't ask, plus `configured` so the strip knows whether to stay hidden |
 | `POST` | `/api/tasks` | `{title, due_date, estimate_hours, priority, source_type, parent_id, blocked_by}` |
 | `PATCH` | `/api/tasks/:id` | partial update of any field |
 | `DELETE` | `/api/tasks/:id` | cascades to subtasks |
